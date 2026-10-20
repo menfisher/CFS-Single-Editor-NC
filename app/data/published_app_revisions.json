@@ -1,0 +1,95 @@
+{
+  "format": "contactsfreeshare.published_revisions.v1",
+  "revisions": [
+    {
+      "version": "1.241.4",
+      "date_display": "10/14/2026",
+      "description": "Let the user-defined print order meetings list scroll so long lists can be dragged into place."
+    },
+    {
+      "date_display": "10/13/2026",
+      "version": "1.241.3",
+      "description": "Restore the Contacts All States dropdown and the Unlisted in TOC checkbox."
+    },
+    {
+      "date_display": "10/12/2026",
+      "version": "1.241.2",
+      "description": "Tighten the phone-letter gap in Verdana. Title and TOC font sizes can be set on the Address Book page, and the book title is centered."
+    },
+    {
+      "date_display": "10/12/2026",
+      "version": "1.241.1",
+      "description": "Google Sign In works in the published Single Editor app. Local-only mode no longer asks for Google Connect, and the Share-app group name is off Settings."
+    },
+    {
+      "date_display": "10/12/2026",
+      "version": "1.241",
+      "description": "Address book PDFs keep the chosen font, including Verdana. Phone letters still reserve two initials plus a blank."
+    },
+    {
+      "date_display": "10/11/2026",
+      "version": "1.240",
+      "description": "Print the chosen address book font in the PDF and paper book. The insert before the table of contents uses the book margins. The error log keeps only recent messages."
+    },
+    {
+      "date_display": "10/9/2026",
+      "version": "1.239.1",
+      "description": "Say ContactsFreeShare stores contacts in Google Contacts as an option, instead of sharing them with other Google accounts."
+    },
+    {
+      "date_display": "10/9/2026",
+      "version": "1.239",
+      "description": "Raise the address book field/page footer off the cut edge without reflowing the contacts above it."
+    },
+    {
+      "date_display": "10/7/2026",
+      "version": "1.238",
+      "description": "Keep Single Editor and Multi-Editor from replacing each other. About now shows Single Editor, and update packages are named SingleEditor."
+    },
+    {
+      "date_display": "10/7/2026",
+      "version": "1.237",
+      "description": "Place the address book insert before the table of contents without counting it as a numbered page. Paper books can turn cut marks on or off. Inserted PDFs print at 600 dpi from the original file instead of a soft JPEG. Version number matches Multi-Editor 1.237."
+    },
+    {
+      "date_display": "10/7/2026",
+      "version": "1.228",
+      "description": "Place the address book insert before the table of contents without counting it as a numbered page. Paper books can turn cut marks on or off. Inserted PDFs print at 600 dpi from the original file instead of a soft JPEG."
+    },
+    {
+      "date_display": "10/6/2026",
+      "version": "1.227",
+      "description": "Keep Husband and Wife labels through Google sync instead of importing Other. Address Book print includes Meeting Data. Addresses stay in the name column, the contacts page has a Notes column and a fitted toolbar, and pa/pb notes use the book font."
+    },
+    {
+      "date_display": "10/6/2026",
+      "version": "1.226",
+      "description": "Keep a much smaller Drive list from wiping local contacts, and stop a blank Drive value from clearing meeting/elder codes. Street 1 and 2 print on separate lines, wrapping names keep a trailing comma, and Notes explains pb/ and pa/ print codes."
+    },
+    {
+      "date_display": "9/20/2026",
+      "version": "1.225",
+      "description": "Show street address 2 on its own line on the contact card and in Google Contacts."
+    },
+    {
+      "date_display": "9/17/2026",
+      "version": "1.223",
+      "description": "Swap left and right margins on even pages for side-spiral paper books so the extra gutter stays on the bound edge."
+    },
+    {
+      "date_display": "9/15/2026",
+      "version": "1.222",
+      "description": "Rename the catch-all shared group in place from Save Settings."
+    },
+    {
+      "date_display": "9/13/2026",
+      "version": "1.221",
+      "description": "Leftover-contact cleanup, long-address wrap, cover-picture persist, and paper-book left-flush margins."
+    },
+    {
+      "date_display": "7/30/2026",
+      "version": "1.3",
+      "description": "CFS Single Editor baseline. Separate update feed from the multi-editor ContactsFreeShare app."
+    }
+  ]
+}
