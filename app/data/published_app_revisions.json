@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.241.4",
+      "version": "1.241.5",
+      "date_display": "10/19/2026",
+      "description": "About shows Single Editor NC. A contact can meet in a different state, and a CONTACTS list prints at the bottom of its matching meeting page."
+    },
+    {
       "date_display": "10/14/2026",
+      "version": "1.241.4",
       "description": "Let the user-defined print order meetings list scroll so long lists can be dragged into place."
     },
     {
