@@ -6,8 +6,17 @@ APP_VERSION_PATH = PROJECT_ROOT / "APP_VERSION"
 APP_EDITION_PATH = PROJECT_ROOT / "APP_EDITION"
 SINGLE_EDITOR_EDITION = "single-editor"
 MULTI_EDITOR_EDITION = "multi-editor"
-SINGLE_EDITOR_UPDATE_MANIFEST_URL = "https://menfisher.github.io/contactsfreeshare-se-updates/app_update_manifest.json"
-MULTI_EDITOR_UPDATE_MANIFEST_URL = "https://menfisher.github.io/contactsfreeshare-updates/app_update_manifest.json"
+# This workspace is Single Editor NC. Its packages are published only to the NC
+# page so they do not replace the shared Single Editor feed.
+SINGLE_EDITOR_NC_UPDATE_FEED = "contactsfreeshare-se-nc-updates"
+SHARED_SINGLE_EDITOR_UPDATE_FEED = "contactsfreeshare-se-updates"
+MULTI_EDITOR_UPDATE_FEED = "contactsfreeshare-updates"
+SINGLE_EDITOR_UPDATE_MANIFEST_URL = (
+    f"https://menfisher.github.io/{SINGLE_EDITOR_NC_UPDATE_FEED}/app_update_manifest.json"
+)
+MULTI_EDITOR_UPDATE_MANIFEST_URL = (
+    f"https://menfisher.github.io/{MULTI_EDITOR_UPDATE_FEED}/app_update_manifest.json"
+)
 
 
 def get_current_app_version() -> str:
@@ -36,7 +45,7 @@ def get_app_edition() -> str:
 
 
 def get_app_edition_label() -> str:
-    return "Single Editor" if get_app_edition() == SINGLE_EDITOR_EDITION else "Multi-Editor"
+    return "Single Editor NC" if get_app_edition() == SINGLE_EDITOR_EDITION else "Multi-Editor"
 
 
 def get_expected_update_manifest_url() -> str:
@@ -49,5 +58,9 @@ def update_manifest_url_matches_edition(url: str, edition: str = "") -> bool:
     text = str(url or "").strip().lower()
     current = str(edition or get_app_edition()).strip().lower()
     if current == SINGLE_EDITOR_EDITION:
-        return "contactsfreeshare-se-updates" in text
-    return "contactsfreeshare-updates" in text and "contactsfreeshare-se-updates" not in text
+        return SINGLE_EDITOR_NC_UPDATE_FEED in text
+    return (
+        MULTI_EDITOR_UPDATE_FEED in text
+        and SHARED_SINGLE_EDITOR_UPDATE_FEED not in text
+        and SINGLE_EDITOR_NC_UPDATE_FEED not in text
+    )

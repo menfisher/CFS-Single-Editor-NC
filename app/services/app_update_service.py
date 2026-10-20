@@ -186,10 +186,14 @@ def _load_update_manifest() -> tuple[dict, str]:
         except (RuntimeError, HTTPError, URLError, OSError, ValueError, json.JSONDecodeError) as exc:
             url_error = exc
 
-    # CFS-SE uses its own public update feed. Do not prefer a newer multi-editor
-    # manifest that may still exist in a shared Google Drive App Updates folder.
-    if SINGLE_EDITOR_ONLY and candidates:
-        return candidates[0]
+    # Single Editor NC follows only its public update page. A shared Drive
+    # manifest can still belong to the original Single Editor feed.
+    if SINGLE_EDITOR_ONLY:
+        if candidates:
+            return candidates[0]
+        if url_error is not None:
+            raise url_error
+        raise RuntimeError("App update check failed. Confirm the public update manifest URL is set and reachable.")
 
     # When Google is connected, also read the Drive App Updates copy and keep the newer
     # of URL vs Drive so a stale CDN response cannot hide a published release.

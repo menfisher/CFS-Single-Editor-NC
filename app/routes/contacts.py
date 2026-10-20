@@ -202,6 +202,7 @@ def _build_contact_payload(form, uploaded_photo_url: str = "") -> dict:
         "birthday": _normalize_birthday_input(form.get("birthday")),
         "notes": str(form.get("notes") or ""),
         "mtg_home_elder_flag": str(form.get("mtg_home_elder_flag") or ""),
+        "meets_in_state": str(form.get("meets_in_state") or ""),
         "relationship_type": form.getlist("relationship_type"),
         "relationship_value": form.getlist("relationship_value"),
         "phone_type": form.getlist("phone_type"),

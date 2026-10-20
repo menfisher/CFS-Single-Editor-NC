@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Contacts Website{% endblock %}</title>
     <link rel="icon" href="/favicon.ico" sizes="any">
-    <link rel="stylesheet" href="/static/css/app.css?v=368">
+    <link rel="stylesheet" href="/static/css/app.css?v=370">
   </head>
   <body class="{% block body_class %}{% endblock %}">
     {% set current_path = request.url.path if request is defined else '' %}
@@ -96,7 +96,7 @@
             class="about-modal-icon"
           >
           <h2 class="about-modal-name">ContactsFreeShare</h2>
-          <p class="about-modal-version">{{ app_edition_label() }} · Version {{ app_version() }}</p>
+          <p class="about-modal-version">{{ app_edition_label() }} · <span class="about-modal-version-number">Version {{ app_version() }}</span></p>
           <p class="about-modal-year">2026</p>
         </div>
         <div class="about-modal-body">

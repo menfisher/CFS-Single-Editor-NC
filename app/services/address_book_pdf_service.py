@@ -181,6 +181,66 @@ def _match_key(value: object) -> str:
     return re.sub(r"[^a-z0-9]+", " ", _clean(value).lower()).strip()
 
 
+_CONTACTS_LIST_NAME = re.compile(r"^contacts\s*,\s*(.+)$", re.IGNORECASE)
+
+
+def _is_contacts_list_meeting(meeting_name: object) -> bool:
+    return bool(_CONTACTS_LIST_NAME.match(_clean(meeting_name)))
+
+
+def _place_key(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", _clean(value).lower()).strip()
+
+
+def _meeting_place_keys(meeting_name: object) -> list[str]:
+    """Place names used to pair a meeting with its CONTACTS list.
+
+    "TRAPPE, MD" and "TRAPPE, ME" both pair with "CONTACTS, Trappe Area".
+    Slash names such as "HILLSBOROUGH/CEDAR GROVE" can match either place.
+    """
+    name = _clean(meeting_name)
+    if not name or _is_contacts_list_meeting(name):
+        return []
+    name = re.sub(r"\s*\([^)]*\)", "", name).strip()
+    if "," in name:
+        name = name.split(",", 1)[0].strip()
+    keys: list[str] = []
+    for part in re.split(r"\s*/\s*", name):
+        key = _place_key(part)
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _contacts_list_place_keys(meeting_name: object) -> list[str]:
+    match = _CONTACTS_LIST_NAME.match(_clean(meeting_name))
+    if not match:
+        return []
+    rest = match.group(1).strip()
+    rest = re.sub(r"\s+areas?\s*$", "", rest, flags=re.IGNORECASE).strip()
+    rest = re.sub(r",\s*[A-Za-z]{2}\s*$", "", rest).strip()
+    keys: list[str] = []
+    for part in re.split(r"\s*(?:&|/)\s*", rest):
+        key = _place_key(part)
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def matching_contacts_meetings(meeting_name: object, meetings: list[dict]) -> list[dict]:
+    """CONTACTS lists in this field whose place name matches the meeting."""
+    place_keys = set(_meeting_place_keys(meeting_name))
+    if not place_keys:
+        return []
+    matched: list[dict] = []
+    for meeting in meetings or []:
+        if not isinstance(meeting, dict):
+            continue
+        if place_keys.intersection(_contacts_list_place_keys(meeting.get("name"))):
+            matched.append(meeting)
+    return matched
+
+
 def _meeting_heading(meeting_name: str, home_last_name: object = "") -> str:
     name = _clean(meeting_name)
     if not name:
@@ -2407,6 +2467,10 @@ def build_address_book_pdf(
         height = line_step * 4
         for contact in meeting.get("contacts") or []:
             height += estimate_contact_block_height(contact)
+        for related_meeting in matching_contacts_meetings(meeting_name, meetings):
+            height += line_step * 3
+            for contact in related_meeting.get("contacts") or []:
+                height += estimate_contact_block_height(contact)
         height += estimate_bible_block_height(field_name, meeting_name)
         return height
 
@@ -2415,6 +2479,21 @@ def build_address_book_pdf(
     for field_index, field in enumerate(ordered_fields):
         field_name = _clean(field.get("name"))
         meetings = list(field.get("meetings") or [])
+        attached_contacts_keys = {
+            _match_key(related.get("name"))
+            for source in meetings
+            for related in matching_contacts_meetings(source.get("name"), meetings)
+        }
+
+        def prints_on_its_own_page(candidate: dict) -> bool:
+            candidate_name = _clean(candidate.get("name"))
+            return not (
+                _is_contacts_list_meeting(candidate_name)
+                and _match_key(candidate_name) in attached_contacts_keys
+            )
+
+        printable_indexes = [index for index, candidate in enumerate(meetings) if prints_on_its_own_page(candidate)]
+        last_printable_index = printable_indexes[-1] if printable_indexes else None
         # Complete mtgs/page may pack multiple meetings from the same field onto one
         # page, but a new field always starts on a fresh page.
         if pack_complete_meetings and field_index > 0 and _page_content_lines():
@@ -2423,8 +2502,10 @@ def build_address_book_pdf(
             new_page()
         for meeting_index, meeting in enumerate(meetings):
             meeting_name = _clean(meeting.get("name"))
+            if not prints_on_its_own_page(meeting):
+                continue
             heading = _meeting_heading(meeting_name, meeting.get("home_last_name"))
-            is_last_meeting = meeting_index == len(meetings) - 1 and field is ordered_fields[-1]
+            is_last_meeting = meeting_index == last_printable_index and field is ordered_fields[-1]
             if pack_complete_meetings and _page_content_lines():
                 needed_height = (
                     estimate_complete_meeting_height(meeting, field_name, meeting_name)
@@ -2445,123 +2526,126 @@ def build_address_book_pdf(
             if current_toc_entry:
                 current_toc_entry.heading_lines.append(heading_line)
             add_rule()
-            for contact in meeting.get("contacts", []):
-                phones = list(contact.get("phones") or [])
-                addresses = list(contact.get("address_entries") or contact.get("addresses") or [])
-                name = _clean(contact.get("name"))
-                phone_x, phone_code_x, main_text_x, continuation_x, name_max_width = _contact_text_columns(
-                    margin_left, page_width, margin_right, font_size, tw
-                )
-                space_width = tw(" ", font_size)
-                # Addresses never use the phone column, even when right-aligned.
-                address_max_width = max(24, page_width - margin_right - (main_text_x + space_width))
-                address_lines: list[tuple[str, str, bool]] = []
-                for address in addresses:
-                    entry = address if isinstance(address, dict) else {"text": address}
-                    address_text = _clean(entry.get("text"))
-                    coordinates = _clean(entry.get("coordinates"))
-                    has_coordinates = bool(entry.get("has_coordinates") or coordinates)
-                    uri = _map_url(provider, coordinates, address_text)
-                    for line in address_display_lines(
-                        address_text,
-                        street_address=_clean(entry.get("street_address")),
-                        extended_address=_clean(entry.get("extended_address")),
-                        city=_clean(entry.get("city")),
-                        region=_clean(entry.get("region")),
-                        postal_code=_clean(entry.get("postal_code")),
-                        label=_clean(entry.get("address_type")),
-                        max_width=address_max_width,
-                        text_width=lambda value, size=font_size: tw(value, size),
-                    ):
-                        address_lines.append((line, uri, has_coordinates))
-                name_lines = contact_name_lines(contact, name, name_max_width)
-                pb_values = [_clean(item) for item in (contact.get("print_book_name") or []) if _clean(item)]
-                pa_values = [_clean(item) for item in (contact.get("print_after_address") or []) if _clean(item)]
-                pb_text = " ".join(f"({value})" for value in pb_values)
-                pb_inline_text = ""
-                pb_own_line = ""
-                if pb_text:
-                    pb_suffix = " " + pb_text
-                    first_name_line = name_lines[0] if name_lines else ""
-                    fits_on_name_line = bool(name_lines) and (
-                        main_text_x + tw(first_name_line, font_size) + tw(pb_suffix, font_size)
-                        <= page_width - margin_right
+            def draw_printed_contacts(contacts: list) -> None:
+                nonlocal y
+                for contact in contacts:
+                    phones = list(contact.get("phones") or [])
+                    addresses = list(contact.get("address_entries") or contact.get("addresses") or [])
+                    name = _clean(contact.get("name"))
+                    phone_x, phone_code_x, main_text_x, continuation_x, name_max_width = _contact_text_columns(
+                        margin_left, page_width, margin_right, font_size, tw
                     )
-                    if fits_on_name_line:
-                        pb_inline_text = pb_text
-                    else:
-                        pb_own_line = pb_text
-                phones_in_names = min(len(name_lines), len(phones))
-                below_count = (1 if pb_own_line else 0) + len(address_lines) + len(pa_values)
-                continuation_lines = max(0, len(phones) - phones_in_names, below_count)
-                row_lines = len(name_lines) + continuation_lines
-                ensure_space(row_lines + 1, field_name, heading)
-                index_name = _index_contact_name(name)
-                if index_name:
-                    index_entries.append(_IndexEntry(name=index_name, page=page_number, target_y=min(page_height, y + (font_size * 2.4))))
-
-                def draw_phone(phone_item: object, *, use_full_custom_label: bool = False) -> None:
-                    phone_value = _clean(phone_item.get("value") if isinstance(phone_item, dict) else phone_item)
-                    digits = _phone_digits(phone_value)
-                    if len(digits) == 10:
-                        call_text = f"{digits[:3]}-{digits[3:6]}"
-                        text_text = digits[6:]
-                        # Use hierarchical forms (tel:// / sms://). Plain "sms:digits" is
-                        # treated as a relative file path by macOS Preview and shows
-                        # "File sms:… not found" instead of opening Messages.
-                        page.lines.append(_PdfLine(call_text, phone_x, y, font_size, uri=f"tel://{digits}", width=tw(call_text, font_size)))
-                        page.lines.append(_PdfLine("-", phone_x + tw(call_text, font_size), y, font_size))
-                        page.lines.append(_PdfLine(text_text, phone_x + tw(f"{call_text}-", font_size), y, font_size, uri=f"sms://{digits}", width=tw(text_text, font_size)))
-                    else:
-                        add_text(phone_value, phone_x)
-                    custom_label = _clean(phone_item.get("custom_label") if isinstance(phone_item, dict) else "")
-                    phone_code = custom_label if use_full_custom_label and custom_label else _clean(phone_item.get("code") if isinstance(phone_item, dict) else "")
-                    add_text(phone_code, phone_code_x)
-
-                phones_drawn = 0
-                for index, line in enumerate(name_lines):
-                    if index > 0:
-                        y -= line_step
-                    if index < len(phones):
-                        draw_phone(phones[index], use_full_custom_label=(index > 0))
-                        phones_drawn += 1
-                    line_x = main_text_x if index == 0 else continuation_x
-                    add_contact_name_line(line, line_x, bold_last_name=(index == 0))
-                    if index == 0 and pb_inline_text:
-                        add_text(pb_inline_text, line_x + tw(line, font_size) + space_width)
-                y -= line_step
-                # Lines rendered below the name share rows with any remaining phones,
-                # so the note never pushes a phone onto a line of its own. The pb note
-                # (when it did not fit on the name line) comes first, then the address
-                # lines. Both follow the address alignment.
-                below_lines: list[tuple[str, str, str, bool]] = []
-                if pb_own_line:
-                    below_lines.append(("pb", pb_own_line, "", False))
-                for address_line, address_uri, address_has_coordinates in address_lines:
-                    below_lines.append(("addr", address_line, address_uri, address_has_coordinates))
-                for pa_value in pa_values:
-                    below_lines.append(("pa", pa_value, "", False))
-                for line_index in range(max(0, len(phones) - phones_drawn, len(below_lines))):
-                    ensure_space(1, field_name, heading)
-                    phone_index = phones_drawn + line_index
-                    if phone_index < len(phones):
-                        draw_phone(phones[phone_index], use_full_custom_label=True)
-                    if line_index < len(below_lines):
-                        kind, line, uri, has_coordinates = below_lines[line_index]
-                        # Never draw address text under the phone column.
-                        min_address_x = main_text_x + space_width
-                        x = min_address_x
-                        if address_align_right:
-                            x = max(
-                                min_address_x,
-                                page_width - margin_right - tw(line, font_size),
-                            )
-                        if kind in ("pb", "pa"):
-                            add_text(line, x)
+                    space_width = tw(" ", font_size)
+                    # Addresses never use the phone column, even when right-aligned.
+                    address_max_width = max(24, page_width - margin_right - (main_text_x + space_width))
+                    address_lines: list[tuple[str, str, bool]] = []
+                    for address in addresses:
+                        entry = address if isinstance(address, dict) else {"text": address}
+                        address_text = _clean(entry.get("text"))
+                        coordinates = _clean(entry.get("coordinates"))
+                        has_coordinates = bool(entry.get("has_coordinates") or coordinates)
+                        uri = _map_url(provider, coordinates, address_text)
+                        for line in address_display_lines(
+                            address_text,
+                            street_address=_clean(entry.get("street_address")),
+                            extended_address=_clean(entry.get("extended_address")),
+                            city=_clean(entry.get("city")),
+                            region=_clean(entry.get("region")),
+                            postal_code=_clean(entry.get("postal_code")),
+                            label=_clean(entry.get("address_type")),
+                            max_width=address_max_width,
+                            text_width=lambda value, size=font_size: tw(value, size),
+                        ):
+                            address_lines.append((line, uri, has_coordinates))
+                    name_lines = contact_name_lines(contact, name, name_max_width)
+                    pb_values = [_clean(item) for item in (contact.get("print_book_name") or []) if _clean(item)]
+                    pa_values = [_clean(item) for item in (contact.get("print_after_address") or []) if _clean(item)]
+                    pb_text = " ".join(f"({value})" for value in pb_values)
+                    pb_inline_text = ""
+                    pb_own_line = ""
+                    if pb_text:
+                        pb_suffix = " " + pb_text
+                        first_name_line = name_lines[0] if name_lines else ""
+                        fits_on_name_line = bool(name_lines) and (
+                            main_text_x + tw(first_name_line, font_size) + tw(pb_suffix, font_size)
+                            <= page_width - margin_right
+                        )
+                        if fits_on_name_line:
+                            pb_inline_text = pb_text
                         else:
-                            add_text(line, x, uri=uri, italic=address_italic and not has_coordinates)
+                            pb_own_line = pb_text
+                    phones_in_names = min(len(name_lines), len(phones))
+                    below_count = (1 if pb_own_line else 0) + len(address_lines) + len(pa_values)
+                    continuation_lines = max(0, len(phones) - phones_in_names, below_count)
+                    row_lines = len(name_lines) + continuation_lines
+                    ensure_space(row_lines + 1, field_name, heading)
+                    index_name = _index_contact_name(name)
+                    if index_name:
+                        index_entries.append(_IndexEntry(name=index_name, page=page_number, target_y=min(page_height, y + (font_size * 2.4))))
+
+                    def draw_phone(phone_item: object, *, use_full_custom_label: bool = False) -> None:
+                        phone_value = _clean(phone_item.get("value") if isinstance(phone_item, dict) else phone_item)
+                        digits = _phone_digits(phone_value)
+                        if len(digits) == 10:
+                            call_text = f"{digits[:3]}-{digits[3:6]}"
+                            text_text = digits[6:]
+                            # Use hierarchical forms (tel:// / sms://). Plain "sms:digits" is
+                            # treated as a relative file path by macOS Preview and shows
+                            # "File sms:… not found" instead of opening Messages.
+                            page.lines.append(_PdfLine(call_text, phone_x, y, font_size, uri=f"tel://{digits}", width=tw(call_text, font_size)))
+                            page.lines.append(_PdfLine("-", phone_x + tw(call_text, font_size), y, font_size))
+                            page.lines.append(_PdfLine(text_text, phone_x + tw(f"{call_text}-", font_size), y, font_size, uri=f"sms://{digits}", width=tw(text_text, font_size)))
+                        else:
+                            add_text(phone_value, phone_x)
+                        custom_label = _clean(phone_item.get("custom_label") if isinstance(phone_item, dict) else "")
+                        phone_code = custom_label if use_full_custom_label and custom_label else _clean(phone_item.get("code") if isinstance(phone_item, dict) else "")
+                        add_text(phone_code, phone_code_x)
+
+                    phones_drawn = 0
+                    for index, line in enumerate(name_lines):
+                        if index > 0:
+                            y -= line_step
+                        if index < len(phones):
+                            draw_phone(phones[index], use_full_custom_label=(index > 0))
+                            phones_drawn += 1
+                        line_x = main_text_x if index == 0 else continuation_x
+                        add_contact_name_line(line, line_x, bold_last_name=(index == 0))
+                        if index == 0 and pb_inline_text:
+                            add_text(pb_inline_text, line_x + tw(line, font_size) + space_width)
                     y -= line_step
-                y -= line_step * 0.25
+                    # Lines rendered below the name share rows with any remaining phones,
+                    # so the note never pushes a phone onto a line of its own. The pb note
+                    # (when it did not fit on the name line) comes first, then the address
+                    # lines. Both follow the address alignment.
+                    below_lines: list[tuple[str, str, str, bool]] = []
+                    if pb_own_line:
+                        below_lines.append(("pb", pb_own_line, "", False))
+                    for address_line, address_uri, address_has_coordinates in address_lines:
+                        below_lines.append(("addr", address_line, address_uri, address_has_coordinates))
+                    for pa_value in pa_values:
+                        below_lines.append(("pa", pa_value, "", False))
+                    for line_index in range(max(0, len(phones) - phones_drawn, len(below_lines))):
+                        ensure_space(1, field_name, heading)
+                        phone_index = phones_drawn + line_index
+                        if phone_index < len(phones):
+                            draw_phone(phones[phone_index], use_full_custom_label=True)
+                        if line_index < len(below_lines):
+                            kind, line, uri, has_coordinates = below_lines[line_index]
+                            # Never draw address text under the phone column.
+                            min_address_x = main_text_x + space_width
+                            x = min_address_x
+                            if address_align_right:
+                                x = max(
+                                    min_address_x,
+                                    page_width - margin_right - tw(line, font_size),
+                                )
+                            if kind in ("pb", "pa"):
+                                add_text(line, x)
+                            else:
+                                add_text(line, x, uri=uri, italic=address_italic and not has_coordinates)
+                        y -= line_step
+                    y -= line_step * 0.25
+            draw_printed_contacts(list(meeting.get("contacts") or []))
             bible_rows = meeting_rows(field_name, meeting_name) if include_bible_study else []
             if bible_rows:
                 bible_chunks = _meeting_row_chunks(bible_rows)
@@ -2609,6 +2693,51 @@ def build_address_book_pdf(
                         row_lines = _meeting_row_line_count(row, **meeting_row_count_kwargs)
                         ensure_space(row_lines, field_name, heading)
                         add_meeting_preview_row(row)
+            related_sections = []
+            for related_meeting in matching_contacts_meetings(meeting_name, meetings):
+                related_name = _clean(related_meeting.get("name"))
+                related_contacts = list(related_meeting.get("contacts") or [])
+                if related_name and related_contacts:
+                    related_sections.append((related_name, related_contacts))
+            if related_sections:
+                block_height = 0.0
+                for _related_name, related_contacts in related_sections:
+                    block_height += line_step * 2.6
+                    for related_contact in related_contacts:
+                        block_height += estimate_contact_block_height(related_contact)
+                # The contact drawer asks for one spare line, so keep that
+                # cushion or the last row will jump to the next page.
+                needed_height = block_height + line_step
+                if y - needed_height < margin_bottom:
+                    add_footer(field_name)
+                    new_page(field_name, heading)
+                line_mark = len(page.lines)
+                rule_mark = len(page.rules)
+                index_mark = len(index_entries)
+                draw_page = page
+                for related_name, related_contacts in related_sections:
+                    ensure_space(3, field_name, heading)
+                    y -= line_step * 0.6
+                    add_center(related_name, font_size + 1, bold=True)
+                    add_rule()
+                    draw_printed_contacts(related_contacts)
+                if page is draw_page:
+                    new_lines = page.lines[line_mark:]
+                    new_rules = page.rules[rule_mark:]
+                    lowest_points = [line.y for line in new_lines]
+                    lowest_points.extend(min(rule.y1, rule.y2) for rule in new_rules)
+                    if lowest_points:
+                        drop = min(lowest_points) - (margin_bottom + line_step)
+                        if drop > 1:
+                            for line in new_lines:
+                                line.y -= drop
+                            for rule in new_rules:
+                                rule.y1 -= drop
+                                rule.y2 -= drop
+                            for entry in index_entries[index_mark:]:
+                                if entry.page == page_number:
+                                    entry.target_y -= drop
+                            y -= drop
             if pack_complete_meetings:
                 if is_last_meeting:
                     add_footer(field_name)

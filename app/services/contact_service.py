@@ -607,6 +607,10 @@ def list_contact_states() -> list[str]:
         SELECT DISTINCT TRIM(region) AS state
         FROM addresses
         WHERE TRIM(COALESCE(region, '')) != ''
+        UNION
+        SELECT TRIM(meets_in_state) AS state
+        FROM contacts
+        WHERE TRIM(COALESCE(meets_in_state, '')) != ''
         """
     )
     states = [_clean_text(row["state"]) for row in rows if _clean_text(row.get("state"))]
@@ -805,6 +809,7 @@ def list_contacts(
               c.fields_text,
               c.meetings_text,
               c.mtg_home_elder_flag,
+              c.meets_in_state,
               c.notes
             FROM contacts c
             WHERE
@@ -1066,6 +1071,7 @@ def build_empty_contact() -> dict:
         "birthday": "",
         "notes": "",
         "mtg_home_elder_flag": "",
+        "meets_in_state": "",
         "fields_list": [],
         "meetings_list": [],
         "group_membership_list": [],
@@ -1193,6 +1199,7 @@ def _build_contact_update_payload(contact: dict) -> dict:
         "birthday": str(contact.get("birthday") or ""),
         "notes": str(contact.get("notes") or ""),
         "mtg_home_elder_flag": str(contact.get("mtg_home_elder_flag") or ""),
+        "meets_in_state": str(contact.get("meets_in_state") or ""),
         "relationship_type": [str(item.get("relation_type") or "") for item in contact.get("relationships", [])],
         "relationship_value": [str(item.get("relation_value") or "") for item in contact.get("relationships", [])],
         "phone_type": [str(item.get("phone_type") or "") for item in contact.get("phones", [])],
@@ -1560,6 +1567,7 @@ def _collect_contact_edit_entries(
         ("Birthday", existing_contact.get("birthday"), core_fields["birthday"]),
         ("Do not print", "1" if bool(existing_contact.get("do_not_print") or 0) else "", "1" if core_fields["do_not_print"] else ""),
         ("1 - Meeting home, 2 - Elder", existing_contact.get("mtg_home_elder_flag"), core_fields["mtg_home_elder_flag"]),
+        ("Meets in different state", existing_contact.get("meets_in_state"), core_fields["meets_in_state"]),
         ("Fields", existing_contact.get("fields_text"), core_fields["fields_text"]),
         ("Meetings", existing_contact.get("meetings_text"), core_fields["meetings_text"]),
         ("Notes", existing_contact.get("notes"), core_fields["notes"]),
@@ -1934,6 +1942,11 @@ def update_contact(contact_id: int, payload: dict, *, queue_google_sync: bool = 
         "birthday": _clean_text(payload.get("birthday")),
         "notes": _clean_text(payload.get("notes")),
         "mtg_home_elder_flag": _clean_text(payload.get("mtg_home_elder_flag")),
+        "meets_in_state": (
+            _clean_text(payload.get("meets_in_state"))
+            if "meets_in_state" in payload
+            else _clean_text(existing_contact.get("meets_in_state"))
+        ),
     }
     core_fields["group_membership"] = build_contact_group_membership(core_fields["fields_text"], core_fields["meetings_text"])
     photo_sync_fields = _next_photo_sync_fields(existing_contact, core_fields["photo"])
@@ -2018,7 +2031,8 @@ def update_contact(contact_id: int, payload: dict, *, queue_google_sync: bool = 
               shared_drive_bootstrapped = ?,
               birthday = ?,
               notes = ?,
-              mtg_home_elder_flag = ?
+              mtg_home_elder_flag = ?,
+              meets_in_state = ?
             WHERE id = ?
             """,
             (
@@ -2043,6 +2057,7 @@ def update_contact(contact_id: int, payload: dict, *, queue_google_sync: bool = 
                 core_fields["birthday"],
                 core_fields["notes"],
                 core_fields["mtg_home_elder_flag"],
+                core_fields["meets_in_state"],
                 contact_id,
             ),
         )
@@ -2391,6 +2406,7 @@ def create_contact(payload: dict) -> int:
         "birthday": _clean_text(payload.get("birthday")),
         "notes": _clean_text(payload.get("notes")),
         "mtg_home_elder_flag": _clean_text(payload.get("mtg_home_elder_flag")),
+        "meets_in_state": _clean_text(payload.get("meets_in_state")),
     }
     core_fields["group_membership"] = build_contact_group_membership(core_fields["fields_text"], core_fields["meetings_text"])
     photo_sync_fields = _next_photo_sync_fields(None, core_fields["photo"])
@@ -2425,6 +2441,7 @@ def create_contact(payload: dict) -> int:
         "birthday": "",
         "do_not_print": 0,
         "mtg_home_elder_flag": "",
+        "meets_in_state": "",
         "fields_text": "",
         "meetings_text": "",
         "notes": "",
@@ -2470,8 +2487,9 @@ def create_contact(payload: dict) -> int:
               shared_drive_bootstrapped,
               birthday,
               notes,
-              mtg_home_elder_flag
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              mtg_home_elder_flag,
+              meets_in_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 core_fields["selected"],
@@ -2495,6 +2513,7 @@ def create_contact(payload: dict) -> int:
                 core_fields["birthday"],
                 core_fields["notes"],
                 core_fields["mtg_home_elder_flag"],
+                core_fields["meets_in_state"],
             ),
         )
         contact_id = int(cursor.lastrowid)

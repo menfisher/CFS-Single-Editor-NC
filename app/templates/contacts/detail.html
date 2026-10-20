@@ -219,6 +219,16 @@
             {% endif %}
           </dd>
         </div>
+        <div class="contact-detail-note-row">
+          <dd>
+            <strong>Meets in different state</strong>
+            {% if contact.meets_in_state %}
+              <div class="preserve-breaks">{{ contact.meets_in_state }}</div>
+            {% else %}
+              <div class="preserve-breaks">no entry</div>
+            {% endif %}
+          </dd>
+        </div>
       </dl>
     </article>
 

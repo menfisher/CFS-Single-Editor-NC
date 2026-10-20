@@ -3,16 +3,20 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/dist"
-UPDATE_REPO="menfisher/contactsfreeshare-se-updates"
-UPDATE_BASE_URL="https://menfisher.github.io/contactsfreeshare-se-updates"
-if [[ "${CONTACTSFREESHARE_UPDATE_REPO:-}" == "menfisher/contactsfreeshare-se-updates" ]]; then
+UPDATE_REPO="menfisher/contactsfreeshare-se-nc-updates"
+UPDATE_BASE_URL="https://menfisher.github.io/contactsfreeshare-se-nc-updates"
+if [[ "${CONTACTSFREESHARE_UPDATE_REPO:-}" == "menfisher/contactsfreeshare-se-nc-updates" ]]; then
   UPDATE_REPO="$CONTACTSFREESHARE_UPDATE_REPO"
 fi
-if [[ "${CONTACTSFREESHARE_UPDATE_BASE_URL:-}" == *"contactsfreeshare-se-updates"* ]]; then
+if [[ "${CONTACTSFREESHARE_UPDATE_BASE_URL:-}" == *"contactsfreeshare-se-nc-updates"* ]]; then
   UPDATE_BASE_URL="$CONTACTSFREESHARE_UPDATE_BASE_URL"
 fi
-UPDATE_REPO_URL="${CONTACTSFREESHARE_UPDATE_REPO_URL:-git@github.com:${UPDATE_REPO}.git}"
-if [[ "${CONTACTSFREESHARE_UPDATE_MANIFEST_URL:-}" == *"contactsfreeshare-se-updates"* ]]; then
+if [[ "${CONTACTSFREESHARE_UPDATE_REPO_URL:-}" == *"contactsfreeshare-se-nc-updates"* ]]; then
+  UPDATE_REPO_URL="$CONTACTSFREESHARE_UPDATE_REPO_URL"
+else
+  UPDATE_REPO_URL="git@github.com:${UPDATE_REPO}.git"
+fi
+if [[ "${CONTACTSFREESHARE_UPDATE_MANIFEST_URL:-}" == *"contactsfreeshare-se-nc-updates"* ]]; then
   UPDATE_MANIFEST_URL="$CONTACTSFREESHARE_UPDATE_MANIFEST_URL"
 else
   UPDATE_MANIFEST_URL="$UPDATE_BASE_URL/app_update_manifest.json"
@@ -40,10 +44,10 @@ Example:
   scripts/publish_app_update.sh 1.1 "Bug fixes and app update publishing improvements."
 
 Optional environment variables:
-  CONTACTSFREESHARE_UPDATE_REPO=menfisher/contactsfreeshare-se-updates
-  CONTACTSFREESHARE_UPDATE_REPO_URL=git@github.com:menfisher/contactsfreeshare-se-updates.git
-  CONTACTSFREESHARE_UPDATE_BASE_URL=https://menfisher.github.io/contactsfreeshare-se-updates
-  CONTACTSFREESHARE_UPDATE_MANIFEST_URL=https://menfisher.github.io/contactsfreeshare-se-updates/app_update_manifest.json
+  CONTACTSFREESHARE_UPDATE_REPO=menfisher/contactsfreeshare-se-nc-updates
+  CONTACTSFREESHARE_UPDATE_REPO_URL=git@github.com:menfisher/contactsfreeshare-se-nc-updates.git
+  CONTACTSFREESHARE_UPDATE_BASE_URL=https://menfisher.github.io/contactsfreeshare-se-nc-updates
+  CONTACTSFREESHARE_UPDATE_MANIFEST_URL=https://menfisher.github.io/contactsfreeshare-se-nc-updates/app_update_manifest.json
   CONTACTSFREESHARE_KEEP_OLD_UPDATE_PACKAGES=1
   CONTACTSFREESHARE_ALLOW_EXISTING_VERSION=1
 TEXT

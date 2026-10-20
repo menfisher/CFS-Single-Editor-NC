@@ -52,6 +52,7 @@ def build_contacts_csv_bytes() -> tuple[str, bytes]:
             "Birthday",
             "Notes",
             "Meeting/Home/Elder",
+            "Meets in different state",
             "Photo URL",
             "Relationships",
             "Phones",
@@ -76,6 +77,7 @@ def build_contacts_csv_bytes() -> tuple[str, bytes]:
                 "Birthday": str(contact.get("birthday") or ""),
                 "Notes": str(contact.get("notes") or ""),
                 "Meeting/Home/Elder": str(contact.get("mtg_home_elder_flag") or ""),
+                "Meets in different state": str(contact.get("meets_in_state") or ""),
                 "Photo URL": str(contact.get("photo") or ""),
                 "Relationships": _join_values(
                     [
@@ -264,6 +266,8 @@ def build_contacts_vcard_bytes() -> tuple[str, bytes]:
             lines.append(_vcard_line("X-CONTACTSFREESHARE-GROUPS", str(contact.get("group_membership") or "")))
         if contact.get("mtg_home_elder_flag"):
             lines.append(_vcard_line("X-CONTACTSFREESHARE-MTG-HOME-ELDER", str(contact.get("mtg_home_elder_flag") or "")))
+        if contact.get("meets_in_state"):
+            lines.append(_vcard_line("X-CONTACTSFREESHARE-MEETS-IN-STATE", str(contact.get("meets_in_state") or "")))
         for item in contact.get("phones") or []:
             phone_value = str(item.get("phone_value") or "").strip()
             if not phone_value:

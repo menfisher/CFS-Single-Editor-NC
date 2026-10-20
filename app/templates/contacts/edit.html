@@ -96,6 +96,30 @@
                 <span>Do not Print</span>
               </label>
             </div>
+            <label class="contact-edit-meets-in-state-field">
+              <span>Meets in different state</span>
+              <div class="contact-edit-meets-in-state-row">
+                <select name="meets_in_state">
+                  <option value="" {% if not contact.meets_in_state %}selected{% endif %}>None</option>
+                  {% set contact_state_options = filters.states|default([]) %}
+                  {% if contact.meets_in_state and contact.meets_in_state not in contact_state_options %}
+                    <option value="{{ contact.meets_in_state }}" selected>{{ contact.meets_in_state }}</option>
+                  {% endif %}
+                  {% for item in contact_state_options %}
+                    <option value="{{ item }}" {% if contact.meets_in_state == item %}selected{% endif %}>{{ item }}</option>
+                  {% endfor %}
+                </select>
+                <button
+                  type="button"
+                  class="contact-notes-info-button"
+                  id="contact-meets-in-state-info-button"
+                  aria-label="About Meets in different state"
+                  title="About Meets in different state"
+                >
+                  <span aria-hidden="true">i</span>
+                </button>
+              </div>
+            </label>
           </div>
           <div class="contact-edit-identity-column contact-edit-identity-column-right">
             <div class="contact-edit-photo-preview" id="contact-edit-photo-preview">
@@ -473,6 +497,18 @@
 
   </form>
 
+  <dialog class="app-modal" id="contact-meets-in-state-info-modal" aria-labelledby="contact-meets-in-state-info-title">
+    <form method="dialog" class="app-modal-panel">
+      <div class="app-modal-header">
+        <h3 class="app-modal-title" id="contact-meets-in-state-info-title">Meets in different state</h3>
+        <p class="app-modal-copy">Used to filter contacts lists on the contact page by state contact attends meeting in rather than state contact lives in.</p>
+      </div>
+      <div class="app-modal-actions">
+        <button type="submit" class="contact-card-button contact-card-button-edit" value="close">OK</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog class="app-modal" id="contact-notes-info-modal" aria-labelledby="contact-notes-info-title">
     <form method="dialog" class="app-modal-panel">
       <div class="app-modal-header">
@@ -632,6 +668,11 @@
       const notesInfoModal = document.getElementById("contact-notes-info-modal");
       notesInfoButton?.addEventListener("click", () => {
         if (typeof notesInfoModal?.showModal === "function") notesInfoModal.showModal();
+      });
+      const meetsInStateInfoButton = document.getElementById("contact-meets-in-state-info-button");
+      const meetsInStateInfoModal = document.getElementById("contact-meets-in-state-info-modal");
+      meetsInStateInfoButton?.addEventListener("click", () => {
+        if (typeof meetsInStateInfoModal?.showModal === "function") meetsInStateInfoModal.showModal();
       });
       const optionModal = document.getElementById("assignment-option-modal");
       const optionModalForm = document.getElementById("assignment-option-modal-form");

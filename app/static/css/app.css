@@ -3437,6 +3437,10 @@ button.site-nav-dropdown-item:hover {
   line-height: 1.35;
 }
 
+.about-modal-version-number {
+  white-space: nowrap;
+}
+
 .about-modal-year {
   margin: 2px 0 0;
   font-size: 0.98rem;
@@ -4065,6 +4069,24 @@ button.site-nav-dropdown-item:hover {
   gap: 8px;
   align-content: start;
   min-width: 0;
+}
+
+.contact-edit-meets-in-state-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.contact-edit-meets-in-state-row select {
+  flex: 0 0 8.5rem;
+  width: 8.5rem;
+  min-width: 8.5rem;
+  max-width: 8.5rem;
+  box-sizing: border-box;
 }
 
 .contact-edit-print-control {

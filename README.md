@@ -92,9 +92,11 @@ unquoted `&` tells the shell to run the command in the background.
 
 The publish script updates `APP_VERSION`, adds the release to the App Revisions
 table, builds the Mac and Windows zip files, renames the manifest to
-`app_update_manifest.json`, commits the files to `menfisher/contactsfreeshare-se-updates`,
-and pushes them to GitHub Pages. This CFS Single Editor update feed is separate from
+`app_update_manifest.json`, commits the files to `menfisher/contactsfreeshare-se-nc-updates`,
+and pushes them to GitHub Pages. This Single Editor NC feed is separate from the
+shared Single Editor feed at `menfisher/contactsfreeshare-se-updates` and from
 the original multi-editor app feed at `menfisher/contactsfreeshare-updates`.
+Packages published from this folder update only installs built from this folder.
 The About modal reads the same `APP_VERSION`, so new packages show the published
 version automatically. By default, old update zip files are removed from local
 `dist/` and from the GitHub Pages update repo so only the current Mac/Windows

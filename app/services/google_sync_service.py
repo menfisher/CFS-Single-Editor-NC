@@ -4404,6 +4404,7 @@ def _shared_contact_drive_export_needed(
 _SHARED_CONTACT_APP_ONLY_CONTACT_FIELDS = frozenset(
     {
         "mtg_home_elder_flag",
+        "meets_in_state",
         "birthday",
         "notes",
         "do_not_print",
@@ -6500,6 +6501,11 @@ def _apply_shared_contact_app_fields(
         local_row.get("mtg_home_elder_flag"),
         remote_row.get("mtg_home_elder_flag"),
     )
+    meets_in_state = (
+        _clean(remote_row.get("meets_in_state"))
+        if "meets_in_state" in remote_row
+        else _clean(local_row.get("meets_in_state"))
+    )
     birthday = _clean(remote_row.get("birthday"))
     remote_photo = _clean_contact_photo_path(remote_row.get("photo"))
     remote_drive_id = _clean(remote_row.get("photo_drive_file_id"))
@@ -6512,6 +6518,7 @@ def _apply_shared_contact_app_fields(
                 UPDATE contacts
                 SET
                   mtg_home_elder_flag = ?,
+                  meets_in_state = ?,
                   birthday = ?,
                   shared_drive_revision = ?,
                   photo = ?,
@@ -6521,6 +6528,7 @@ def _apply_shared_contact_app_fields(
                 """,
                 (
                     mtg_home_elder_flag,
+                    meets_in_state,
                     birthday,
                     remote_revision,
                     remote_photo,
@@ -6535,11 +6543,12 @@ def _apply_shared_contact_app_fields(
                 UPDATE contacts
                 SET
                   mtg_home_elder_flag = ?,
+                  meets_in_state = ?,
                   birthday = ?,
                   shared_drive_revision = ?
                 WHERE id = ?
                 """,
-                (mtg_home_elder_flag, birthday, remote_revision, int(local_row["id"])),
+                (mtg_home_elder_flag, meets_in_state, birthday, remote_revision, int(local_row["id"])),
             )
         conn.commit()
     if apply_photo and access_token:
@@ -6557,6 +6566,11 @@ def _shared_contact_app_fields_stale(local_row: dict, remote_row: dict, remote_r
     remote_mtg = _clean(remote_row.get("mtg_home_elder_flag"))
     if remote_mtg and remote_mtg != local_mtg:
         return True
+    if "meets_in_state" in remote_row:
+        local_state = _clean(local_row.get("meets_in_state"))
+        remote_state = _clean(remote_row.get("meets_in_state"))
+        if remote_state != local_state:
+            return True
     local_birthday = _clean(local_row.get("birthday"))
     remote_birthday = _clean(remote_row.get("birthday"))
     if remote_birthday != local_birthday:
@@ -6565,7 +6579,7 @@ def _shared_contact_app_fields_stale(local_row: dict, remote_row: dict, remote_r
 
 
 def _shared_contact_local_app_fields_should_push(local_contact: dict, remote_contact: dict) -> bool:
-    for key in ("mtg_home_elder_flag", "birthday"):
+    for key in ("mtg_home_elder_flag", "meets_in_state", "birthday"):
         local_value = _clean(local_contact.get(key))
         remote_value = _clean(remote_contact.get(key))
         if local_value == remote_value:
@@ -6597,6 +6611,7 @@ def _queue_contacts_with_local_ahead_shared_app_fields(
           AND shared_drive_needs_export = 0
           AND (
             COALESCE(mtg_home_elder_flag, '') != ''
+            OR COALESCE(meets_in_state, '') != ''
             OR COALESCE(birthday, '') != ''
           )
         ORDER BY id
@@ -6779,6 +6794,7 @@ def sync_mobile_contact_app_fields_from_google_drive(
                   family_name,
                   given_name,
                   mtg_home_elder_flag,
+                  meets_in_state,
                   birthday,
                   photo,
                   photo_drive_file_id,
@@ -6830,6 +6846,7 @@ def sync_mobile_contact_app_fields_for_contact(
               family_name,
               given_name,
               mtg_home_elder_flag,
+              meets_in_state,
               birthday,
               photo,
               photo_drive_file_id,
