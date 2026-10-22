@@ -482,14 +482,22 @@
       <article class="panel contact-edit-panel-notes">
         <div class="contact-edit-notes-header">
           <h3>Notes</h3>
-          <button type="button" class="contact-notes-info-button" id="contact-notes-info-button" aria-label="Notes print codes" title="Notes print codes">
-            <span aria-hidden="true">i</span>
-          </button>
+          <div class="contact-notes-header-actions">
+            <div class="contact-notes-format" role="group" aria-label="Format selected note text">
+              <button type="button" data-notes-command="bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
+              <button type="button" data-notes-command="italic" title="Italic (Ctrl+I)"><em>I</em></button>
+              <button type="button" data-notes-command="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+            </div>
+            <button type="button" class="contact-notes-info-button" id="contact-notes-info-button" aria-label="Notes print codes" title="Notes print codes">
+              <span aria-hidden="true">i</span>
+            </button>
+          </div>
         </div>
         <div class="form-grid">
           <label>
             <span>Notes</span>
-            <textarea name="notes" rows="6" data-autogrow>{{ contact.notes or '' }}</textarea>
+            <div id="contact-notes-editor" class="contact-notes-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Notes"></div>
+            <textarea name="notes" id="contact-notes-input" hidden>{{ contact.notes or '' }}</textarea>
           </label>
         </div>
       </article>
@@ -516,7 +524,8 @@
         <p class="app-modal-copy">Additional info can be printed with the contact with these codes: <strong>pb/</strong> or <strong>pa/</strong>.</p>
         <p class="app-modal-copy"><strong>pb/</strong> = print before address (same line as name if room)</p>
         <p class="app-modal-copy"><strong>pa/</strong> = print after address</p>
-        <p class="app-modal-copy">Example: <code>pb/ Tom is son</code> will print (Tom is son) before the address lines.</p>
+        <p class="app-modal-copy">Example: <code>pb/ Tom is son</code> prints Tom is son before the address lines. Include parentheses in the note to print them, such as <code>pb/ (Tom is son)</code> or <code>pa/ (lives nearby)</code>.</p>
+        <p class="app-modal-copy">Select words in Notes, then press Ctrl+B for bold, Ctrl+I for italic, or Ctrl+U for underline. On a Mac, use the Command key. The same formatting prints on <strong>pb/</strong> and <strong>pa/</strong> lines. A word that is both bold and italic prints in bold.</p>
       </div>
       <div class="app-modal-actions">
         <button type="submit" class="contact-card-button contact-card-button-edit" value="close">OK</button>
@@ -669,6 +678,125 @@
       notesInfoButton?.addEventListener("click", () => {
         if (typeof notesInfoModal?.showModal === "function") notesInfoModal.showModal();
       });
+      const notesInput = document.getElementById("contact-notes-input");
+      const notesEditor = document.getElementById("contact-notes-editor");
+      const escapeNotesText = (text) => text
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+      const normalizeNotesHtml = (html) => {
+        const container = document.createElement("div");
+        container.innerHTML = html || "";
+        const renderNode = (node) => {
+          if (node.nodeType === Node.TEXT_NODE) return escapeNotesText(node.textContent || "");
+          if (node.nodeType !== Node.ELEMENT_NODE) return "";
+          const tag = node.tagName.toLowerCase();
+          const children = Array.from(node.childNodes).map(renderNode).join("");
+          if (tag === "br") return "<br>";
+          if (tag === "b" || tag === "strong") return `<strong>${children}</strong>`;
+          if (tag === "i" || tag === "em") return `<em>${children}</em>`;
+          if (tag === "u") return `<u>${children}</u>`;
+          if (tag === "div" || tag === "p") {
+            if (!children || children === "<br>") return "<br>";
+            return children.endsWith("<br>") ? children : `${children}<br>`;
+          }
+          return children;
+        };
+        const childNodes = Array.from(container.childNodes);
+        const normalized = childNodes.map((node, index) => {
+          const rendered = renderNode(node);
+          if (index === 0) return rendered;
+          const previous = childNodes[index - 1];
+          const previousTag = previous && previous.nodeType === Node.ELEMENT_NODE ? previous.tagName.toLowerCase() : "";
+          const currentTag = node.nodeType === Node.ELEMENT_NODE ? node.tagName.toLowerCase() : "";
+          const needsBreakBefore = (currentTag === "div" || currentTag === "p")
+            && previousTag !== "div"
+            && previousTag !== "p"
+            && !rendered.startsWith("<br>");
+          return needsBreakBefore ? `<br>${rendered}` : rendered;
+        }).join("");
+        return normalized.replace(/^(?:<br>\s*)+|(?:<br>\s*)+$/g, "");
+      };
+      const notesToEditorHtml = (value) => {
+        const source = String(value || "");
+        const safe = source.replace(/<[^>]*>/g, (tag) => (
+          /^<\/?(?:strong|b|em|i|u)\s*>$/i.test(tag) || /^<br\s*\/?>$/i.test(tag) ? tag : escapeNotesText(tag)
+        ));
+        return normalizeNotesHtml(safe);
+      };
+      const syncNotes = () => {
+        if (!notesInput || !notesEditor) return;
+        notesInput.value = normalizeNotesHtml(notesEditor.innerHTML);
+      };
+      const notesFormatTag = { bold: "strong", italic: "em", underline: "u" };
+      let savedNotesRange = null;
+      document.addEventListener("selectionchange", () => {
+        const selection = window.getSelection();
+        if (!notesEditor || !selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+        if (!notesEditor.contains(selection.anchorNode) || !notesEditor.contains(selection.focusNode)) return;
+        savedNotesRange = selection.getRangeAt(0).cloneRange();
+      });
+      const applyNotesCommand = (command) => {
+        const tagName = notesFormatTag[command];
+        if (!notesEditor || !tagName) return;
+        const selection = window.getSelection();
+        const liveSelection = selection
+          && selection.rangeCount > 0
+          && !selection.isCollapsed
+          && notesEditor.contains(selection.anchorNode)
+          && notesEditor.contains(selection.focusNode);
+        if (!liveSelection && savedNotesRange) {
+          notesEditor.focus();
+          selection.removeAllRanges();
+          selection.addRange(savedNotesRange);
+        }
+        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+        if (!notesEditor.contains(selection.anchorNode) || !notesEditor.contains(selection.focusNode)) return;
+        let existing = selection.anchorNode.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode.parentElement;
+        while (existing && existing !== notesEditor && existing.tagName.toLowerCase() !== tagName) {
+          existing = existing.parentElement;
+        }
+        if (existing && existing !== notesEditor) {
+          const parent = existing.parentNode;
+          while (existing.firstChild) parent.insertBefore(existing.firstChild, existing);
+          parent.removeChild(existing);
+          parent.normalize();
+        } else {
+          const range = selection.getRangeAt(0);
+          const wrapper = document.createElement(tagName);
+          wrapper.appendChild(range.extractContents());
+          range.insertNode(wrapper);
+          const next = document.createRange();
+          next.selectNodeContents(wrapper);
+          selection.removeAllRanges();
+          selection.addRange(next);
+        }
+        syncNotes();
+      };
+      if (notesEditor && notesInput) {
+        notesEditor.innerHTML = notesToEditorHtml(notesInput.value);
+        notesEditor.addEventListener("input", syncNotes);
+        notesEditor.addEventListener("blur", syncNotes);
+        editForm?.addEventListener("submit", syncNotes);
+        notesEditor.addEventListener("keydown", (event) => {
+          if (!(event.metaKey || event.ctrlKey)) return;
+          const key = event.key.toLowerCase();
+          if (key !== "b" && key !== "i" && key !== "u") return;
+          const selection = window.getSelection();
+          const hasSelection = selection
+            && selection.rangeCount > 0
+            && !selection.isCollapsed
+            && notesEditor.contains(selection.anchorNode)
+            && notesEditor.contains(selection.focusNode);
+          if (!hasSelection) return;
+          event.preventDefault();
+          applyNotesCommand(key === "b" ? "bold" : key === "i" ? "italic" : "underline");
+        });
+        document.querySelectorAll("[data-notes-command]").forEach((button) => {
+          button.addEventListener("mousedown", (event) => event.preventDefault());
+          button.addEventListener("click", () => applyNotesCommand(button.dataset.notesCommand || ""));
+        });
+      }
       const meetsInStateInfoButton = document.getElementById("contact-meets-in-state-info-button");
       const meetsInStateInfoModal = document.getElementById("contact-meets-in-state-info-modal");
       meetsInStateInfoButton?.addEventListener("click", () => {

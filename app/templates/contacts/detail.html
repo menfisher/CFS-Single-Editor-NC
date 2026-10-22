@@ -175,7 +175,7 @@
           <dt>Notes</dt>
           <dd>
             {% if contact.notes %}
-              <div class="notes preserve-breaks">{{ contact.notes }}</div>
+              <div class="notes preserve-breaks">{{ contact_notes_html(contact.notes) }}</div>
             {% else %}
               <span class="empty">No notes stored.</span>
             {% endif %}

@@ -163,23 +163,47 @@ DB_PATH = DB_DIR / "app.sqlite3"
 ERROR_LOG_PATH = RUNTIME_ROOT / "logs" / "errors.log"
 
 
-def _load_dotenv() -> None:
-    dotenv_paths = [PROJECT_ROOT / ".env"]
-    if USE_APP_DATA:
-        dotenv_paths.append(APP_DATA_DIR / ".env")
-
-    for dotenv_path in dotenv_paths:
-        if not dotenv_path.exists():
+def _read_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
             continue
-        for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key:
+            values[key] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _merge_env_values(sources: list[dict[str, str]]) -> dict[str, str]:
+    """Later sources win. Blank values never replace a value that is already set."""
+    merged: dict[str, str] = {}
+    for source in sources:
+        for key, value in source.items():
+            text = str(value or "").strip()
+            if text:
+                merged[key] = text
+    return merged
+
+
+def _load_dotenv() -> None:
+    # packaged.env is a normal filename so the Windows updater keeps it.
+    # The old .env can be blank and is preserved across updates on purpose.
+    sources = [
+        _read_env_file(PROJECT_ROOT / "packaged.env"),
+        _read_env_file(PROJECT_ROOT / ".env"),
+    ]
+    if USE_APP_DATA:
+        sources.append(_read_env_file(APP_DATA_DIR / ".env"))
+
+    for key, value in _merge_env_values(sources).items():
+        if not str(os.environ.get(key) or "").strip():
+            os.environ[key] = value
 
 
 _load_dotenv()

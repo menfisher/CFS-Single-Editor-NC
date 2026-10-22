@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
-from html import escape
+from html import escape, unescape
+from html.parser import HTMLParser
 from typing import Any
+
+from markupsafe import Markup
 
 from app.services.address_format import address_display_lines, enrich_address_parts, split_address_type_prefix
 from app.database import _ensure_field_list_tables, fetch_all, get_connection
@@ -1507,28 +1510,193 @@ def _format_preview_contact(contact: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_NOTE_STYLE_TAGS = {
+    "b": "bold",
+    "strong": "bold",
+    "i": "italic",
+    "em": "italic",
+    "u": "underline",
+}
+_KNOWN_NOTE_TAG = re.compile(r"</?(?:strong|b|em|i|u|br)\b[^>]*>", re.IGNORECASE)
+_NOTE_BREAK = re.compile(r"<br\s*/?>|</(?:div|p)\s*>", re.IGNORECASE)
+_NOTE_BLOCK_OPEN = re.compile(r"<(?:div|p)[^>]*>", re.IGNORECASE)
+
+
+class _InlineNoteParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.runs: list[dict[str, Any]] = []
+        self.active: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        style = _NOTE_STYLE_TAGS.get(str(tag or "").lower())
+        if style:
+            self.active.add(style)
+
+    def handle_endtag(self, tag: str) -> None:
+        style = _NOTE_STYLE_TAGS.get(str(tag or "").lower())
+        if style:
+            self.active.discard(style)
+
+    def handle_data(self, data: str) -> None:
+        text = unescape(data)
+        if not text:
+            return
+        run = {
+            "text": text,
+            "bold": "bold" in self.active,
+            "italic": "italic" in self.active,
+            "underline": "underline" in self.active,
+        }
+        if self.runs and {key: self.runs[-1][key] for key in ("bold", "italic", "underline")} == {
+            key: run[key] for key in ("bold", "italic", "underline")
+        }:
+            self.runs[-1]["text"] += text
+        else:
+            self.runs.append(run)
+
+
+def _prepare_inline_html(value: object) -> str:
+    text = str(value or "")
+    if not _KNOWN_NOTE_TAG.search(text):
+        return escape(text)
+    placeholders: list[str] = []
+
+    def hold(match: re.Match[str]) -> str:
+        placeholders.append(match.group(0))
+        return f"\ue000{len(placeholders) - 1}\ue001"
+
+    held = _KNOWN_NOTE_TAG.sub(hold, text).replace("<", "&lt;").replace(">", "&gt;")
+    for index, tag in enumerate(placeholders):
+        held = held.replace(f"\ue000{index}\ue001", tag)
+    return held
+
+
+def _inline_style_runs(value: object) -> list[dict[str, Any]]:
+    prepared = _prepare_inline_html(value)
+    if not prepared:
+        return []
+    parser = _InlineNoteParser()
+    parser.feed(prepared)
+    parser.close()
+    return [run for run in parser.runs if run.get("text")]
+
+
+def _drop_plain_chars(runs: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+    if count <= 0:
+        return [dict(run) for run in runs]
+    remaining = count
+    kept: list[dict[str, Any]] = []
+    for run in runs:
+        text = str(run.get("text") or "")
+        if remaining >= len(text):
+            remaining -= len(text)
+            continue
+        if remaining:
+            text = text[remaining:]
+            remaining = 0
+        if text:
+            kept.append({**run, "text": text})
+    return kept
+
+
+def _rstrip_style_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    kept = [dict(run) for run in runs if str(run.get("text") or "")]
+    while kept:
+        text = str(kept[-1]["text"])
+        trimmed = text.rstrip()
+        if trimmed == text:
+            break
+        if trimmed:
+            kept[-1] = {**kept[-1], "text": trimmed}
+            break
+        kept.pop()
+    return kept
+
+
+def _note_source_lines(notes: object) -> list[str]:
+    text = str(notes or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _NOTE_BLOCK_OPEN.sub("", text)
+    text = _NOTE_BREAK.sub("\n", text)
+    return text.split("\n")
+
+
 def _parse_print_book_notes(notes: Any) -> tuple[list[str], list[str]]:
     """Extract address-book print directives from a contact's Notes.
 
     Any Notes line beginning with ``pb/`` is printed next to the name in the
     book; any line beginning with ``pa/`` is printed after the address lines.
-    The prefix match is case-insensitive and tolerates a space after the slash
-    (so ``pa/text`` and ``pa/ text`` behave the same).
+    The prefix match is case-insensitive. Spaces typed after the slash are kept
+    and printed. ``pb/ Tom`` has one space before the note, and ``pb/  Tom``
+    has two. Parentheses print only when they are typed in the note. Bold,
+    italic, and underline tags on the note text are kept.
     """
     name_line_values: list[str] = []
     after_address_values: list[str] = []
-    for raw_line in str(notes or "").splitlines():
-        stripped = raw_line.strip()
-        lowered = stripped.lower()
+    for raw_line in _note_source_lines(notes):
+        runs = _rstrip_style_runs(_inline_style_runs(raw_line))
+        plain = "".join(str(run.get("text") or "") for run in runs)
+        trimmed = plain.strip()
+        lowered = trimmed.lower()
         if lowered.startswith("pb/"):
-            value = stripped[3:].strip()
-            if value:
-                name_line_values.append(value)
+            target = name_line_values
         elif lowered.startswith("pa/"):
-            value = stripped[3:].strip()
-            if value:
-                after_address_values.append(value)
+            target = after_address_values
+        else:
+            continue
+        lead = len(plain) - len(plain.lstrip())
+        value_runs = _rstrip_style_runs(_drop_plain_chars(runs, lead + 3))
+        if "".join(str(run.get("text") or "") for run in value_runs).strip():
+            target.append(_style_runs_html(value_runs))
     return name_line_values, after_address_values
+
+
+def print_book_note_runs(value: object, *, default_gap: str = "") -> list[dict[str, Any]]:
+    """Return styled pieces of a pb/ or pa/ note, including typed spaces."""
+    runs = _rstrip_style_runs(_inline_style_runs(value))
+    plain = "".join(str(run.get("text") or "") for run in runs)
+    if not plain.strip():
+        return []
+    gap_len = len(plain) - len(plain.lstrip(" "))
+    body = _drop_plain_chars(runs, gap_len)
+    if not "".join(str(run.get("text") or "") for run in body).strip():
+        return []
+    gap = plain[:gap_len] or default_gap
+    styled = [{"text": gap, "bold": False, "italic": False, "underline": False}] if gap else []
+    styled.extend(body)
+    return styled
+
+
+def print_book_note_display(value: object, *, default_gap: str = "") -> str:
+    """Return the printed note, keeping spaces and any parentheses the user typed."""
+    return "".join(str(run.get("text") or "") for run in print_book_note_runs(value, default_gap=default_gap))
+
+
+def _style_runs_html(runs: list[dict[str, Any]], *, preserve_spaces: bool = False) -> str:
+    parts: list[str] = []
+    for run in runs:
+        text = _print_escape(run.get("text"))
+        if preserve_spaces:
+            text = text.replace(" ", "&nbsp;")
+        if run.get("underline"):
+            text = f"<u>{text}</u>"
+        if run.get("italic"):
+            text = f"<em>{text}</em>"
+        if run.get("bold"):
+            text = f"<strong>{text}</strong>"
+        parts.append(text)
+    return "".join(parts)
+
+
+def contact_notes_html(value: object) -> Markup:
+    """Render Notes for the page, keeping bold, italic, underline, and line breaks."""
+    lines = _note_source_lines(value)
+    rendered: list[str] = []
+    for index, line in enumerate(lines):
+        if index:
+            rendered.append("<br>")
+        rendered.append(_style_runs_html(_inline_style_runs(line)))
+    return Markup("".join(rendered))
 
 
 def _field_list_contact_payload(contact: dict[str, Any]) -> dict[str, Any]:
@@ -2901,17 +3069,32 @@ def _field_list_print_phone_line_html(phone: dict[str, Any], index: int) -> str:
     )
 
 
+def _kept_print_note_values(values: object) -> list[str]:
+    kept: list[str] = []
+    for item in values or []:
+        text = str(item or "").rstrip()
+        if text.strip():
+            kept.append(text)
+    return kept
+
+
 def _field_list_print_book_note_values(contact: dict[str, Any]) -> list[str]:
-    return [_clean(item) for item in (contact.get("print_book_name") or []) if _clean(item)]
+    return _kept_print_note_values(contact.get("print_book_name"))
 
 
 def _field_list_print_after_address_values(contact: dict[str, Any]) -> list[str]:
-    return [_clean(item) for item in (contact.get("print_after_address") or []) if _clean(item)]
+    return _kept_print_note_values(contact.get("print_after_address"))
 
 
-def _field_list_print_book_note_text(contact: dict[str, Any]) -> str:
-    values = _field_list_print_book_note_values(contact)
-    return " ".join(f"({value})" for value in values)
+def _field_list_print_book_note_text(contact: dict[str, Any], *, default_gap: str = " ") -> str:
+    return "".join(
+        print_book_note_display(value, default_gap=default_gap)
+        for value in _field_list_print_book_note_values(contact)
+    )
+
+
+def _print_note_html(value: object, *, default_gap: str = "") -> str:
+    return _style_runs_html(print_book_note_runs(value, default_gap=default_gap), preserve_spaces=True)
 
 
 def _field_list_print_book_note_fits_on_name(contact: dict[str, Any], settings: dict[str, Any], pb_text: str) -> bool:
@@ -2932,25 +3115,30 @@ def _field_list_print_book_note_fits_on_name(contact: dict[str, Any], settings: 
         return sum(1.35 if char.isupper() else 0.72 if char in "ilI.,;:' " else 1.0 for char in text)
 
     first_line = (_wrap_contact_name_lines(contact, measure_width, approx_chars) or [name_value])[0]
-    return measure_width(f"{first_line} {pb_text}") <= approx_chars
+    return measure_width(f"{first_line}{pb_text}") <= approx_chars
 
 
 def _field_list_print_note_lines_html(contact: dict[str, Any], settings: dict[str, Any]) -> tuple[str, str, str]:
     """Return (pb_inline_html, pb_own_line_html, pa_lines_html)."""
+    pb_values = _field_list_print_book_note_values(contact)
     pb_text = _field_list_print_book_note_text(contact)
     pb_inline_html = ""
     pb_own_line_html = ""
     if pb_text:
         if _field_list_print_book_note_fits_on_name(contact, settings, pb_text):
-            pb_inline_html = f'<span class="print-field-list-print-book-note">&nbsp;{_print_escape(pb_text)}</span>'
+            pb_inline_html = "".join(
+                f'<span class="print-field-list-print-book-note">{_print_note_html(value, default_gap=" ")}</span>'
+                for value in pb_values
+            )
         else:
-            pb_own_line_html = (
+            pb_own_line_html = "".join(
                 f'<div class="print-field-list-print-book-note print-field-list-print-note-line">'
-                f"{_print_escape(pb_text)}</div>"
+                f"{_print_note_html(value)}</div>"
+                for value in pb_values
             )
     pa_lines_html = "".join(
         f'<div class="print-field-list-print-after-note print-field-list-print-note-line">'
-        f"{_print_escape(value)}</div>"
+        f"{_print_note_html(value)}</div>"
         for value in _field_list_print_after_address_values(contact)
     )
     return pb_inline_html, pb_own_line_html, pa_lines_html

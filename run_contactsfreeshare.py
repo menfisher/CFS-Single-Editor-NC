@@ -73,7 +73,11 @@ def _write_env_file(path: Path, values: dict[str, str]) -> None:
 def _seed_runtime_env_file() -> None:
     app_data_dir = Path(os.environ["CONTACTSFREESHARE_DATA_DIR"])
     app_data_dir.mkdir(parents=True, exist_ok=True)
-    bundled_env = _read_env_file(Path(__file__).resolve().parent / ".env")
+    app_dir = Path(__file__).resolve().parent
+    bundled_env = _read_env_file(app_dir / ".env")
+    for key, value in _read_env_file(app_dir / "packaged.env").items():
+        if value and not bundled_env.get(key):
+            bundled_env[key] = value
     runtime_env_path = app_data_dir / ".env"
     runtime_env = _read_env_file(runtime_env_path)
     changed = False

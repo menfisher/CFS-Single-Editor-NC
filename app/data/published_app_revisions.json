@@ -2,8 +2,28 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.241.5",
+      "version": "1.242",
+      "date_display": "10/22/2026",
+      "description": "Notes print codes keep the spaces and parentheses you type, and selected words can be bold, italic, or underlined."
+    },
+    {
+      "date_display": "10/22/2026",
+      "version": "1.241.8",
+      "description": "Keep a new meeting in place so a content cell and layout font can be saved."
+    },
+    {
+      "date_display": "10/21/2026",
+      "version": "1.241.7",
+      "description": "Keep the Google connection settings when Single Editor NC updates on Windows."
+    },
+    {
+      "date_display": "10/21/2026",
+      "version": "1.241.6",
+      "description": "Include the Google connection settings so Single Editor NC can connect to Google."
+    },
+    {
       "date_display": "10/19/2026",
+      "version": "1.241.5",
       "description": "About shows Single Editor NC. A contact can meet in a different state, and a CONTACTS list prints at the bottom of its matching meeting page."
     },
     {

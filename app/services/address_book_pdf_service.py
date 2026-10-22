@@ -2528,6 +2528,42 @@ def build_address_book_pdf(
             add_rule()
             def draw_printed_contacts(contacts: list) -> None:
                 nonlocal y
+                from app.services.field_list_service import print_book_note_runs
+
+                def kept_note(item: object) -> str:
+                    text = str(item or "").rstrip()
+                    return text if text.strip() else ""
+
+                def note_runs_width(runs: list[dict]) -> float:
+                    return sum(
+                        _text_width(str(run.get("text") or ""), font_size, font_family, bold=bool(run.get("bold")))
+                        for run in runs
+                    )
+
+                def add_note_runs(runs: list[dict], x: float) -> None:
+                    cursor = x
+                    for run in runs:
+                        text = str(run.get("text") or "")
+                        if not text:
+                            continue
+                        width = _text_width(text, font_size, font_family, bold=bool(run.get("bold")))
+                        is_bold = bool(run.get("bold"))
+                        add_text(text, cursor, bold=is_bold, italic=bool(run.get("italic")) and not is_bold)
+                        if run.get("underline"):
+                            rule_y = y - (font_size * 0.18)
+                            page.rules.append(_PdfRule(cursor, rule_y, cursor + width, rule_y, 0.35))
+                        cursor += width
+
+                def drawn_name_end(line: str, x: float) -> float:
+                    safe_line = fit_line(line, x)
+                    comma_index = safe_line.find(",")
+                    if comma_index <= 0:
+                        return x + tw(safe_line, font_size)
+                    last_name = safe_line[:comma_index]
+                    rest = safe_line[comma_index:]
+                    rest_x = x + _text_width(last_name, font_size, font_family, bold=True)
+                    return rest_x + tw(fit_line(rest, rest_x), font_size)
+
                 for contact in contacts:
                     phones = list(contact.get("phones") or [])
                     addresses = list(contact.get("address_entries") or contact.get("addresses") or [])
@@ -2558,24 +2594,41 @@ def build_address_book_pdf(
                         ):
                             address_lines.append((line, uri, has_coordinates))
                     name_lines = contact_name_lines(contact, name, name_max_width)
-                    pb_values = [_clean(item) for item in (contact.get("print_book_name") or []) if _clean(item)]
-                    pa_values = [_clean(item) for item in (contact.get("print_after_address") or []) if _clean(item)]
-                    pb_text = " ".join(f"({value})" for value in pb_values)
-                    pb_inline_text = ""
-                    pb_own_line = ""
-                    if pb_text:
-                        pb_suffix = " " + pb_text
-                        first_name_line = name_lines[0] if name_lines else ""
-                        fits_on_name_line = bool(name_lines) and (
-                            main_text_x + tw(first_name_line, font_size) + tw(pb_suffix, font_size)
+                    pb_values = [kept_note(item) for item in (contact.get("print_book_name") or [])]
+                    pb_values = [item for item in pb_values if item]
+                    pa_values = [kept_note(item) for item in (contact.get("print_after_address") or [])]
+                    pa_values = [item for item in pa_values if item]
+                    pb_inline_runs = [
+                        run
+                        for value in pb_values
+                        for run in print_book_note_runs(value, default_gap=" ")
+                    ]
+                    pb_own_runs = [
+                        run
+                        for value in pb_values
+                        for run in print_book_note_runs(value)
+                    ]
+                    pa_run_lines = [
+                        print_book_note_runs(value)
+                        for value in pa_values
+                    ]
+                    pa_run_lines = [
+                        line for line in pa_run_lines if any(str(run.get("text") or "").strip() for run in line)
+                    ]
+
+                    if pb_inline_runs and name_lines:
+                        fits_on_name_line = (
+                            drawn_name_end(name_lines[0], main_text_x) + note_runs_width(pb_inline_runs)
                             <= page_width - margin_right
                         )
-                        if fits_on_name_line:
-                            pb_inline_text = pb_text
-                        else:
-                            pb_own_line = pb_text
+                        if not fits_on_name_line:
+                            pb_inline_runs = []
+                    else:
+                        pb_inline_runs = []
+                    if pb_inline_runs:
+                        pb_own_runs = []
                     phones_in_names = min(len(name_lines), len(phones))
-                    below_count = (1 if pb_own_line else 0) + len(address_lines) + len(pa_values)
+                    below_count = (1 if pb_own_runs else 0) + len(address_lines) + len(pa_run_lines)
                     continuation_lines = max(0, len(phones) - phones_in_names, below_count)
                     row_lines = len(name_lines) + continuation_lines
                     ensure_space(row_lines + 1, field_name, heading)
@@ -2610,20 +2663,20 @@ def build_address_book_pdf(
                             phones_drawn += 1
                         line_x = main_text_x if index == 0 else continuation_x
                         add_contact_name_line(line, line_x, bold_last_name=(index == 0))
-                        if index == 0 and pb_inline_text:
-                            add_text(pb_inline_text, line_x + tw(line, font_size) + space_width)
+                        if index == 0 and pb_inline_runs:
+                            add_note_runs(pb_inline_runs, drawn_name_end(line, line_x))
                     y -= line_step
                     # Lines rendered below the name share rows with any remaining phones,
                     # so the note never pushes a phone onto a line of its own. The pb note
                     # (when it did not fit on the name line) comes first, then the address
                     # lines. Both follow the address alignment.
-                    below_lines: list[tuple[str, str, str, bool]] = []
-                    if pb_own_line:
-                        below_lines.append(("pb", pb_own_line, "", False))
+                    below_lines: list[tuple] = []
+                    if pb_own_runs:
+                        below_lines.append(("pb", pb_own_runs, "", False))
                     for address_line, address_uri, address_has_coordinates in address_lines:
                         below_lines.append(("addr", address_line, address_uri, address_has_coordinates))
-                    for pa_value in pa_values:
-                        below_lines.append(("pa", pa_value, "", False))
+                    for pa_runs in pa_run_lines:
+                        below_lines.append(("pa", pa_runs, "", False))
                     for line_index in range(max(0, len(phones) - phones_drawn, len(below_lines))):
                         ensure_space(1, field_name, heading)
                         phone_index = phones_drawn + line_index
@@ -2635,12 +2688,13 @@ def build_address_book_pdf(
                             min_address_x = main_text_x + space_width
                             x = min_address_x
                             if address_align_right:
+                                line_width = note_runs_width(line) if kind in ("pb", "pa") else tw(line, font_size)
                                 x = max(
                                     min_address_x,
-                                    page_width - margin_right - tw(line, font_size),
+                                    page_width - margin_right - line_width,
                                 )
                             if kind in ("pb", "pa"):
-                                add_text(line, x)
+                                add_note_runs(line, x)
                             else:
                                 add_text(line, x, uri=uri, italic=address_italic and not has_coordinates)
                         y -= line_step

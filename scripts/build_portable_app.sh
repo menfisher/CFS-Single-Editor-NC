@@ -185,6 +185,7 @@ if [ -f "$ROOT_DIR/.env" ]; then
     }
     $1 in keys { print }
   ' "$ROOT_DIR/.env" > "$APP_DIR/.env"
+  cp "$APP_DIR/.env" "$APP_DIR/packaged.env"
 fi
 
 if [ -f "$ROOT_DIR/.env" ]; then

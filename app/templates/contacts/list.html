@@ -251,7 +251,7 @@
               <td class="preserve-breaks contacts-col-meetings">{{ contact.meetings_text }}</td>
               <td class="preserve-breaks small-text contacts-col-phones">{{ contact.phone_summary or "" }}</td>
               <td class="preserve-breaks small-text contacts-col-addresses">{{ contact.address_summary or "" }}</td>
-              <td class="preserve-breaks small-text contacts-col-notes">{{ contact.notes or "" }}</td>
+              <td class="preserve-breaks small-text contacts-col-notes">{{ contact_notes_html(contact.notes) }}</td>
             </tr>
           {% else %}
             <tr>

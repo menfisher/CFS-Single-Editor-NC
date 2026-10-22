@@ -1205,15 +1205,33 @@ def list_meeting_v2_edit_batches() -> list[dict]:
 
 
 def _ensure_section_layout(section_id: int) -> None:
+    try:
+        resolved_section_id = int(section_id)
+    except (TypeError, ValueError):
+        return
+    if resolved_section_id <= 0:
+        return
+
     existing = fetch_one(
         """
         SELECT id
         FROM meeting_section_layout_v2
         WHERE section_id = ?
         """,
-        (section_id,),
+        (resolved_section_id,),
     )
     if existing:
+        return
+
+    section_exists = fetch_one(
+        """
+        SELECT id
+        FROM meeting_sections_v2
+        WHERE id = ?
+        """,
+        (resolved_section_id,),
+    )
+    if not section_exists:
         return
 
     default_preset_id = ensure_default_book_layout_preset()
@@ -1231,9 +1249,19 @@ def _ensure_section_layout(section_id: int) -> None:
     layout_values = _layout_values_from_preset(preset_dict)
 
     with get_connection() as conn:
+        parent_row = conn.execute(
+            """
+            SELECT
+              (SELECT id FROM meeting_sections_v2 WHERE id = ?) AS section_id,
+              (SELECT id FROM book_layout_presets WHERE id = ?) AS preset_id
+            """,
+            (resolved_section_id, default_preset_id),
+        ).fetchone()
+        if not parent_row or not parent_row["section_id"] or not parent_row["preset_id"]:
+            return
         conn.execute(
             """
-            INSERT INTO meeting_section_layout_v2 (
+            INSERT OR IGNORE INTO meeting_section_layout_v2 (
               section_id,
               book_layout_preset_id,
               usable_width_in,
@@ -1248,7 +1276,7 @@ def _ensure_section_layout(section_id: int) -> None:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
             """,
             (
-                section_id,
+                resolved_section_id,
                 default_preset_id,
                 layout_values["usable_width_in"],
                 layout_values["column_count"],
@@ -2037,7 +2065,6 @@ def rename_meeting_v2_name_option(kind: str, old_value: str, new_value: str) -> 
 
 def list_meeting_v2_sections(search_text: str = "", field_filter: str = "", meeting_filter: str = "") -> list[dict]:
     ensure_meeting_v2_sections()
-    delete_empty_no_cell_meeting_v2_sections()
     where_clauses = ["1 = 1"]
     params: list[str] = []
 
