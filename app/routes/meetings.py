@@ -18,6 +18,13 @@ from app.services.google_sync_service import get_notice_message
 from app.services.google_sync_service import get_google_sync_summary
 from app.services.google_sync_service import is_editing_allowed
 from app.services.google_sync_service import mark_meetingdata_for_drive_export
+from app.services.field_end_list_service import (
+    add_field_end_list,
+    delete_field_end_list,
+    list_field_end_lists,
+    rename_field_end_list,
+    reorder_field_end_lists,
+)
 from app.services.meeting_v2_service import (
     add_meeting_v2_cell,
     add_meeting_v2_stacked_cell,
@@ -281,6 +288,69 @@ def meeting_v2_edit_list(request: Request):
         raise
 
 
+@router.get("/v2/field-end-lists")
+async def meeting_v2_list_field_end_lists(field_name: str = Query("")):
+    return JSONResponse({"lists": list_field_end_lists(field_name)})
+
+
+@router.post("/v2/field-end-lists")
+async def meeting_v2_add_field_end_list(request: Request):
+    if not is_editing_allowed():
+        return JSONResponse({"error": "The app is in NO-EDIT mode."}, status_code=403)
+    form = await request.form()
+    try:
+        saved = add_field_end_list(str(form.get("field_name") or ""), str(form.get("list_name") or ""))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    _export_shared_after_meeting_edit()
+    return JSONResponse(saved)
+
+
+@router.post("/v2/field-end-lists/reorder")
+async def meeting_v2_reorder_field_end_lists(request: Request):
+    if not is_editing_allowed():
+        return JSONResponse({"error": "The app is in NO-EDIT mode."}, status_code=403)
+    form = await request.form()
+    field_name = str(form.get("field_name") or "")
+    list_names = [str(value) for value in form.getlist("list_names") if str(value).strip()]
+    try:
+        lists = reorder_field_end_lists(field_name, list_names)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    _export_shared_after_meeting_edit()
+    return JSONResponse({"lists": lists})
+
+
+@router.post("/v2/field-end-lists/rename")
+async def meeting_v2_rename_field_end_list(request: Request):
+    if not is_editing_allowed():
+        return JSONResponse({"error": "The app is in NO-EDIT mode."}, status_code=403)
+    form = await request.form()
+    try:
+        saved = rename_field_end_list(
+            str(form.get("field_name") or ""),
+            str(form.get("old_list_name") or ""),
+            str(form.get("new_list_name") or ""),
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    _export_shared_after_meeting_edit()
+    return JSONResponse(saved)
+
+
+@router.post("/v2/field-end-lists/remove")
+async def meeting_v2_remove_field_end_list(request: Request):
+    if not is_editing_allowed():
+        return JSONResponse({"error": "The app is in NO-EDIT mode."}, status_code=403)
+    form = await request.form()
+    try:
+        removed = delete_field_end_list(str(form.get("field_name") or ""), str(form.get("list_name") or ""))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    _export_shared_after_meeting_edit()
+    return JSONResponse(removed)
+
+
 @router.post("/v2/section-name-options")
 async def meeting_v2_add_name_option(request: Request):
     if not is_editing_allowed():
@@ -376,7 +446,20 @@ def meeting_v2_section_editor(
         if not section:
             raise HTTPException(status_code=404, detail="Meeting v2 section not found")
         section["last_insert_type"] = last_insert_type if last_insert_type in {"blank", "clone", "new", "divider"} else "blank"
-        section["field_meeting_sections"] = list_meeting_v2_sections("", str(section.get("field_name") or ""), "")
+        field_name = str(section.get("field_name") or "")
+        field_meeting_sections = list_meeting_v2_sections("", field_name, "")
+        current_id = int(section.get("id") or 0)
+        if current_id and not any(int(item.get("id") or 0) == current_id for item in field_meeting_sections):
+            field_meeting_sections = [
+                {"id": current_id, "meeting_name": section.get("meeting_name") or ""},
+                *field_meeting_sections,
+            ]
+        section["field_meeting_sections"] = field_meeting_sections
+        section["field_end_lists"] = [
+            str(item.get("list_name") or "").strip()
+            for item in list_field_end_lists(field_name)
+            if str(item.get("list_name") or "").strip()
+        ]
         row_colors = get_meeting_v2_row_colors()
         google_sync = get_google_sync_summary()
         _log_meeting_route("editor loaded google sync")

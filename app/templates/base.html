@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Contacts Website{% endblock %}</title>
     <link rel="icon" href="/favicon.ico" sizes="any">
-    <link rel="stylesheet" href="/static/css/app.css?v=371">
+    <link rel="stylesheet" href="/static/css/app.css?v=375">
   </head>
   <body class="{% block body_class %}{% endblock %}">
     {% set current_path = request.url.path if request is defined else '' %}
@@ -279,11 +279,13 @@
 
         const showBusyModal = (title, copy) => {
           if (!busyModal || typeof busyModal.showModal !== "function") return;
-          if (busyModalTitle) {
-            busyModalTitle.textContent = title || "Working";
+          const nextTitle = title || "Working";
+          const nextCopy = copy || "Please wait.";
+          if (busyModalTitle && busyModalTitle.textContent !== nextTitle) {
+            busyModalTitle.textContent = nextTitle;
           }
-          if (busyModalCopy) {
-            busyModalCopy.textContent = copy || "Please wait.";
+          if (busyModalCopy && busyModalCopy.textContent !== nextCopy) {
+            busyModalCopy.textContent = nextCopy;
           }
           if (!busyModal.open) {
             busyModal.showModal();
@@ -418,8 +420,8 @@
               editorTimeoutArmed = false;
               editorLockWasActive = false;
               closeEditorTimeoutModal();
-              closeBusyModal();
               if (shouldNavigate && !editorTimeoutSigningOut) {
+                closeBusyModal();
                 const path = window.location.pathname || "";
                 if (!path.startsWith("/presets/google-connect")) {
                   window.location.replace("/presets/google-connect?notice=editor_signed_out");

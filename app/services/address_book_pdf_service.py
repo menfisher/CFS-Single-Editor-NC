@@ -236,6 +236,8 @@ def matching_contacts_meetings(meeting_name: object, meetings: list[dict]) -> li
     for meeting in meetings or []:
         if not isinstance(meeting, dict):
             continue
+        if meeting.get("is_field_end_list"):
+            continue
         if place_keys.intersection(_contacts_list_place_keys(meeting.get("name"))):
             matched.append(meeting)
     return matched
@@ -262,6 +264,24 @@ def _order_payload(raw_json: object) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {"fields": []}
 
 
+def _is_field_end_list_meeting(meeting: dict) -> bool:
+    return bool(meeting.get("is_field_end_list"))
+
+
+def _field_end_list_sort_key(meeting: dict) -> tuple:
+    try:
+        order = int(meeting.get("field_end_list_order") or 0)
+    except (TypeError, ValueError):
+        order = 0
+    return (order, _sort_key(meeting.get("name")))
+
+
+def _order_field_meetings(meetings: list[dict], sort_key) -> list[dict]:
+    regular = [meeting for meeting in meetings if not _is_field_end_list_meeting(meeting)]
+    field_end = [meeting for meeting in meetings if _is_field_end_list_meeting(meeting)]
+    return sorted(regular, key=sort_key) + sorted(field_end, key=_field_end_list_sort_key)
+
+
 def order_address_book_fields(fields: list[dict], mode: str, raw_order_json: object) -> list[dict]:
     copied_fields = [
         {
@@ -272,7 +292,10 @@ def order_address_book_fields(fields: list[dict], mode: str, raw_order_json: obj
     ]
     if mode != "custom":
         for field in copied_fields:
-            field["meetings"] = sorted(field.get("meetings", []), key=lambda item: _sort_key(item.get("name")))
+            field["meetings"] = _order_field_meetings(
+                field.get("meetings", []),
+                lambda item: _sort_key(item.get("name")),
+            )
         return sorted(copied_fields, key=lambda item: _sort_key(item.get("name")))
 
     payload = _order_payload(raw_order_json)
@@ -303,9 +326,9 @@ def order_address_book_fields(fields: list[dict], mode: str, raw_order_json: obj
 
     for field in copied_fields:
         field_name = _clean(field.get("name"))
-        field["meetings"] = sorted(
+        field["meetings"] = _order_field_meetings(
             field.get("meetings", []),
-            key=lambda item: (
+            lambda item: (
                 meeting_orders.get((field_name, _clean(item.get("name"))), 1_000_000),
                 _sort_key(item.get("name")),
             ),
@@ -1609,37 +1632,25 @@ def _build_toc_pages(
         )
 
     page = add_toc_page()
-    current_field = ""
-    for entry in entries:
-        if entry.is_heading_only:
-            if y - line_step < margin_bottom:
-                add_footer(page)
-                page = add_toc_page()
-            entry.toc_page_index = len(toc_pages) - 1
-            display_page = str(entry.page + page_offset)
-            page_text_width = tw(display_page, item_size)
-            target_page_index = max(0, entry.page + link_offset - 1)
-            item_text = fit(entry.meeting_heading, field_size, content_width - page_number_width - item_size)
-            item_width = tw(item_text, field_size)
-            dots_x = margin_left + item_width + (item_size * 0.35)
-            dots_width = max(0.0, page_number_x - dots_x - (item_size * 0.5))
-            dot_count = max(0, int(dots_width / max(1.0, tw(".", item_size))))
-            page.lines.append(_PdfLine(item_text, margin_left, y, field_size, bold=True, link_page_index=target_page_index))
-            if dot_count:
-                page.lines.append(_PdfLine("." * dot_count, dots_x, y, item_size, bold=True, link_page_index=target_page_index))
-            page.lines.append(_PdfLine(display_page, page_width - margin_right - page_text_width, y, item_size, link_page_index=target_page_index))
-            y -= line_step
-            current_field = ""
-            continue
-        needs_field = bool(entry.field_name) and entry.field_name != current_field
-        required_lines = 2 if needs_field else 1
-        if y - (required_lines * line_step) < margin_bottom:
-            add_footer(page)
-            page = add_toc_page()
-        if needs_field:
-            current_field = entry.field_name
-            page.lines.append(_PdfLine(current_field, margin_left, y, field_size, bold=True))
-            y -= line_step
+    entries_on_page = 0
+
+    def lines_fit(line_count: int) -> bool:
+        return y - (line_count * line_step) >= margin_bottom
+
+    def start_new_toc_page() -> None:
+        nonlocal page, entries_on_page
+        add_footer(page)
+        page = add_toc_page()
+        entries_on_page = 0
+
+    def draw_field_heading(field_name: str) -> None:
+        nonlocal y, entries_on_page
+        page.lines.append(_PdfLine(field_name, margin_left, y, field_size, bold=True))
+        y -= line_step
+        entries_on_page += 1
+
+    def draw_meeting_line(entry: _TocEntry) -> None:
+        nonlocal y, entries_on_page
         display_page = str(entry.page + page_offset)
         page_text_width = tw(display_page, item_size)
         target_page_index = max(0, entry.page + link_offset - 1)
@@ -1655,6 +1666,62 @@ def _build_toc_pages(
         page.lines.append(_PdfLine(item_text, text_x, y, item_size, link_page_index=target_page_index))
         page.lines.append(_PdfLine(display_page, page_width - margin_right - page_text_width, y, item_size, link_page_index=target_page_index))
         y -= line_step
+        entries_on_page += 1
+
+    def draw_heading_only(entry: _TocEntry) -> None:
+        nonlocal y, entries_on_page
+        if not lines_fit(1) and entries_on_page:
+            start_new_toc_page()
+        entry.toc_page_index = len(toc_pages) - 1
+        display_page = str(entry.page + page_offset)
+        page_text_width = tw(display_page, item_size)
+        target_page_index = max(0, entry.page + link_offset - 1)
+        item_text = fit(entry.meeting_heading, field_size, content_width - page_number_width - item_size)
+        item_width = tw(item_text, field_size)
+        dots_x = margin_left + item_width + (item_size * 0.35)
+        dots_width = max(0.0, page_number_x - dots_x - (item_size * 0.5))
+        dot_count = max(0, int(dots_width / max(1.0, tw(".", item_size))))
+        page.lines.append(_PdfLine(item_text, margin_left, y, field_size, bold=True, link_page_index=target_page_index))
+        if dot_count:
+            page.lines.append(_PdfLine("." * dot_count, dots_x, y, item_size, bold=True, link_page_index=target_page_index))
+        page.lines.append(_PdfLine(display_page, page_width - margin_right - page_text_width, y, item_size, link_page_index=target_page_index))
+        y -= line_step
+        entries_on_page += 1
+
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        if entry.is_heading_only or not entry.field_name:
+            if entry.is_heading_only:
+                draw_heading_only(entry)
+            else:
+                if entries_on_page and not lines_fit(1):
+                    start_new_toc_page()
+                draw_meeting_line(entry)
+            index += 1
+            continue
+        group_end = index + 1
+        while (
+            group_end < len(entries)
+            and not entries[group_end].is_heading_only
+            and entries[group_end].field_name == entry.field_name
+        ):
+            group_end += 1
+        group = entries[index:group_end]
+        index = group_end
+        field_lines = 1 + len(group)
+        if entries_on_page and not lines_fit(field_lines):
+            start_new_toc_page()
+        show_heading = True
+        for grouped_entry in group:
+            upcoming = (1 if show_heading else 0) + 1
+            if entries_on_page and not lines_fit(upcoming):
+                start_new_toc_page()
+                show_heading = True
+            if show_heading:
+                draw_field_heading(grouped_entry.field_name)
+                show_heading = False
+            draw_meeting_line(grouped_entry)
 
     add_footer(page)
     return toc_pages
@@ -2425,9 +2492,8 @@ def build_address_book_pdf(
         phone_x, phone_code_x, main_text_x, continuation_x, name_max_width = _contact_text_columns(
             margin_left, page_width, margin_right, font_size, tw
         )
-        space_width = tw(" ", font_size)
         # Addresses never use the phone column, even when right-aligned.
-        address_max_width = max(24, page_width - margin_right - (main_text_x + space_width))
+        address_max_width = max(24, page_width - margin_right - continuation_x)
         address_line_count = 0
         for address in addresses:
             entry = address if isinstance(address, dict) else {"text": address}
@@ -2487,6 +2553,8 @@ def build_address_book_pdf(
 
         def prints_on_its_own_page(candidate: dict) -> bool:
             candidate_name = _clean(candidate.get("name"))
+            if candidate.get("is_field_end_list"):
+                return True
             return not (
                 _is_contacts_list_meeting(candidate_name)
                 and _match_key(candidate_name) in attached_contacts_keys
@@ -2571,9 +2639,8 @@ def build_address_book_pdf(
                     phone_x, phone_code_x, main_text_x, continuation_x, name_max_width = _contact_text_columns(
                         margin_left, page_width, margin_right, font_size, tw
                     )
-                    space_width = tw(" ", font_size)
                     # Addresses never use the phone column, even when right-aligned.
-                    address_max_width = max(24, page_width - margin_right - (main_text_x + space_width))
+                    address_max_width = max(24, page_width - margin_right - continuation_x)
                     address_lines: list[tuple[str, str, bool]] = []
                     for address in addresses:
                         entry = address if isinstance(address, dict) else {"text": address}
@@ -2684,8 +2751,8 @@ def build_address_book_pdf(
                             draw_phone(phones[phone_index], use_full_custom_label=True)
                         if line_index < len(below_lines):
                             kind, line, uri, has_coordinates = below_lines[line_index]
-                            # Never draw address text under the phone column.
-                            min_address_x = main_text_x + space_width
+                            # Line up left-aligned addresses with wrapped children and pa/ notes.
+                            min_address_x = continuation_x
                             x = min_address_x
                             if address_align_right:
                                 line_width = note_runs_width(line) if kind in ("pb", "pa") else tw(line, font_size)

@@ -2006,12 +2006,29 @@ def _field_list_picker_payload() -> dict[str, Any]:
                     continue
                 field_bucket["meetings"].setdefault(meeting, []).append(contact)
 
+    from app.services.field_end_list_service import field_end_list_names_by_field
+
     settings = _load_address_book_settings()
+    field_end_lists_by_field = field_end_list_names_by_field()
+    for field_name in field_end_lists_by_field:
+        fields.setdefault(field_name, {"name": field_name, "meetings": {}})
     normalized_fields = []
     for field_name in order_field_names(list(fields.keys()), settings.get("print_order_json")):
+        field_end_names = field_end_lists_by_field.get(field_name) or []
+        field_end_name_set = {name for name in field_end_names}
+        regular_meeting_names = [
+            meeting_name
+            for meeting_name in order_meeting_names(
+                list(fields[field_name]["meetings"].keys()),
+                settings.get("print_order_json"),
+                field_name,
+            )
+            if meeting_name not in field_end_name_set
+        ]
+        ordered_meeting_names = regular_meeting_names + list(field_end_names)
         meetings = []
-        for meeting_name in order_meeting_names(list(fields[field_name]["meetings"].keys()), settings.get("print_order_json"), field_name):
-            meeting_bucket_contacts = _field_list_merge_households(fields[field_name]["meetings"][meeting_name])
+        for meeting_name in ordered_meeting_names:
+            meeting_bucket_contacts = _field_list_merge_households(fields[field_name]["meetings"].get(meeting_name) or [])
             has_meeting_home = any(_clean(item.get("mtg_home_elder_flag")).startswith("1") for item in meeting_bucket_contacts)
             sorted_contacts = sorted(
                 meeting_bucket_contacts,
@@ -2021,6 +2038,8 @@ def _field_list_picker_payload() -> dict[str, Any]:
                 {
                     "name": meeting_name,
                     "contacts": sorted_contacts,
+                    "is_field_end_list": meeting_name in field_end_name_set,
+                    "field_end_list_order": field_end_names.index(meeting_name) + 1 if meeting_name in field_end_name_set else 0,
                 }
             )
         normalized_fields.append({"name": field_name, "meetings": meetings})
@@ -4339,6 +4358,12 @@ main {{
   overflow-wrap: break-word;
   word-break: normal;
   white-space: pre-line;
+}}
+.print-field-list-contact-address.align-left {{
+  padding-left: 1ch;
+}}
+.print-field-list-print-note-line {{
+  padding-left: 1ch;
 }}
 .print-field-list-contact-address > div {{
   min-width: 0;

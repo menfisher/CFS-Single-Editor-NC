@@ -1470,6 +1470,10 @@ def delete_empty_orphan_meeting_v2_sections() -> int:
             nonempty_cell_count = int(row["nonempty_cell_count"] or 0)
             if nonempty_cell_count > 0 or (field_name, meeting_name) in valid_pairs:
                 continue
+            from app.services.field_end_list_service import is_field_end_list
+
+            if is_field_end_list(field_name, meeting_name):
+                continue
             conn.execute("DELETE FROM meeting_sections_v2 WHERE id = ?", (int(row["id"]),))
             removed_count += 1
 
@@ -1495,7 +1499,7 @@ def delete_empty_no_cell_meeting_v2_sections() -> int:
     with get_connection() as conn:
         section_rows = conn.execute(
             """
-            SELECT s.id
+            SELECT s.id, s.field_name, s.meeting_name
             FROM meeting_sections_v2 s
             LEFT JOIN meeting_section_rows_v2 r ON r.section_id = s.id
             LEFT JOIN meeting_row_cells_v2 c ON c.row_id = r.id
@@ -1504,7 +1508,11 @@ def delete_empty_no_cell_meeting_v2_sections() -> int:
             """
         ).fetchall()
         removed_count = 0
+        from app.services.field_end_list_service import is_field_end_list
+
         for row in section_rows:
+            if is_field_end_list(row["field_name"], row["meeting_name"]):
+                continue
             if _delete_meeting_v2_section_in_conn(conn, int(row["id"])):
                 removed_count += 1
         conn.commit()
@@ -1834,12 +1842,24 @@ def get_meeting_v2_filter_options(field_filter: str = "") -> dict:
 
     field_values = order_field_names(field_values, print_order_json)
     meeting_values = order_meeting_names(meeting_values, print_order_json, str(field_filter or "").strip())
+    from app.services.field_end_list_service import field_end_list_names_by_field
+
+    field_end_lists_by_field = field_end_list_names_by_field()
+    for field_name, list_names in field_end_lists_by_field.items():
+        field_meetings = meetings_by_field.setdefault(field_name, [])
+        for list_name in list_names:
+            if list_name not in field_meetings:
+                field_meetings.append(list_name)
+            if list_name not in meeting_values:
+                meeting_values.append(list_name)
+
     meetings_by_field = order_meetings_by_field(meetings_by_field, print_order_json)
 
     result = {
         "fields": field_values,
         "meetings": meeting_values,
         "meetings_by_field": meetings_by_field,
+        "field_end_lists_by_field": field_end_lists_by_field,
     }
     _log_meeting_service("filter options complete")
     return result
@@ -1984,6 +2004,22 @@ def delete_meeting_v2_name_option(kind: str, value: str) -> str:
             """,
             (normalized_kind, normalized_value),
         )
+        if normalized_kind == "field":
+            conn.execute(
+                """
+                DELETE FROM field_end_lists
+                WHERE field_name = ?
+                """,
+                (normalized_value,),
+            )
+        elif normalized_kind == "meeting":
+            conn.execute(
+                """
+                DELETE FROM field_end_lists
+                WHERE list_name = ?
+                """,
+                (normalized_value,),
+            )
         conn.commit()
     return normalized_value
 
@@ -2065,6 +2101,9 @@ def rename_meeting_v2_name_option(kind: str, old_value: str, new_value: str) -> 
 
 def list_meeting_v2_sections(search_text: str = "", field_filter: str = "", meeting_filter: str = "") -> list[dict]:
     ensure_meeting_v2_sections()
+    from app.services.field_end_list_service import ensure_field_end_list_sections
+
+    ensure_field_end_list_sections()
     where_clauses = ["1 = 1"]
     params: list[str] = []
 
@@ -2104,6 +2143,12 @@ def list_meeting_v2_sections(search_text: str = "", field_filter: str = "", meet
           s.source_legacy_start_row,
           s.source_legacy_end_row
         HAVING COUNT(c.id) > 0
+          OR EXISTS (
+            SELECT 1
+            FROM field_end_lists f
+            WHERE f.field_name = s.field_name
+              AND f.list_name = s.meeting_name
+          )
         ORDER BY lower(s.field_name), lower(s.meeting_name), s.id
         """,
         tuple(params),

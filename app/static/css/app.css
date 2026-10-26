@@ -1608,6 +1608,47 @@ h3 {
   margin-bottom: 8px;
 }
 
+.field-end-list-order-items {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.field-end-list-order-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 16px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.field-end-list-order-item > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.field-end-list-order-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.field-end-list-order-actions .contact-card-button {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+.field-end-list-order-empty {
+  color: var(--muted);
+}
+
 .contacts-search-bar {
   display: grid;
   grid-template-columns: minmax(180px, 1.1fr) minmax(130px, 0.5fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr) max-content;
@@ -3290,6 +3331,10 @@ button.site-nav-dropdown-item:hover {
 .app-modal.address-book-pdf-cover-modal {
   width: min(1180px, calc(100vw - 18px));
   max-width: calc(100vw - 12px);
+}
+
+.app-modal.field-end-list-order-modal {
+  width: min(720px, calc(100vw - 32px));
 }
 
 .contacts-message-summary {

@@ -273,7 +273,22 @@ def _delete_empty_meetingdata_sections_for_assignment_option(conn, kind: str, va
         """,
         (normalized_value,),
     ).fetchall()
-    section_ids = [int(row["id"]) for row in rows]
+    from app.services.field_end_list_service import is_field_end_list
+
+    section_ids = []
+    for row in rows:
+        section_id = int(row["id"])
+        section = conn.execute(
+            """
+            SELECT field_name, meeting_name
+            FROM meeting_sections_v2
+            WHERE id = ?
+            """,
+            (section_id,),
+        ).fetchone()
+        if section and is_field_end_list(section["field_name"], section["meeting_name"]):
+            continue
+        section_ids.append(section_id)
     for section_id in section_ids:
         conn.execute("DELETE FROM meeting_sections_v2 WHERE id = ?", (section_id,))
 
@@ -538,6 +553,15 @@ def rename_contact_assignment_option(kind: str, old_value: str, new_value: str) 
         from app.services.meeting_toc_service import rename_unlisted_toc_assignment
 
         rename_unlisted_toc_assignment(normalized_kind, normalized_old_value, normalized_new_value, conn)
+        from app.services.field_end_list_service import (
+            rename_field_end_list_meeting,
+            rename_field_end_lists_for_field,
+        )
+
+        if normalized_kind == "field":
+            rename_field_end_lists_for_field(normalized_old_value, normalized_new_value, conn)
+        else:
+            rename_field_end_list_meeting(normalized_old_value, normalized_new_value, conn)
         removed_meetingdata_sections = _delete_empty_meetingdata_sections_for_assignment_option(
             conn,
             normalized_kind,

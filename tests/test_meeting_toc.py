@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from app.database import initialize_database, set_request_db_path
-from app.services.address_book_pdf_service import build_address_book_pdf
+from app.services.address_book_pdf_service import _TocEntry, _build_toc_pages, build_address_book_pdf
 from app.services.field_list_service import export_field_list_payload, import_field_list_payload
 from app.services.meeting_toc_service import (
     meeting_is_unlisted_in_toc,
@@ -95,6 +95,44 @@ class MeetingTocTests(unittest.TestCase):
         self.assertGreater(listed_text.count("Hillsborough"), unlisted_text.count("Hillsborough"))
         self.assertIn("Hillsborough", unlisted_text)
         self.assertIn("Ada Lovelace", unlisted_text)
+
+    def test_toc_moves_a_field_to_the_next_page_instead_of_splitting_it(self) -> None:
+        entries = [
+            _TocEntry("NC Eastern", "DENTON", 31),
+            _TocEntry("NC Eastern", "LEXINGTON", 32),
+            _TocEntry("NC Eastern", "SALISBURY", 33),
+            _TocEntry("NC Eastern", "CONCORD", 34),
+            _TocEntry("NC Western Field/Charlotte", "ASHEVILLE", 35),
+            _TocEntry("NC Western Field/Charlotte", "GASTONIA", 37),
+            _TocEntry("NC Western Field/Charlotte", "HICKORY", 39),
+            _TocEntry("NC Western Field/Charlotte", "LINCOLNTON", 40),
+        ]
+        pages = _build_toc_pages(
+            entries=entries,
+            book_title="Address Book",
+            page_width=400,
+            page_height=130,
+            margin_left=10,
+            margin_right=10,
+            margin_top=10,
+            margin_bottom=10,
+            base_font_size=10,
+            page_offset=0,
+            compact=False,
+            font_family="Arial",
+            title_font_size=12,
+            toc_font_size=10,
+        )
+        def page_text(page) -> str:
+            return "\n".join(line.text for line in page.lines)
+
+        western_pages = [index for index, page in enumerate(pages) if "NC Western Field/Charlotte" in page_text(page)]
+        self.assertEqual(western_pages, [1])
+        western_text = page_text(pages[1])
+        for meeting in ("ASHEVILLE", "GASTONIA", "HICKORY", "LINCOLNTON"):
+            self.assertIn(meeting, western_text)
+        self.assertIn("CONCORD", page_text(pages[0]))
+        self.assertNotIn("NC Western Field/Charlotte", page_text(pages[0]))
 
 
 if __name__ == "__main__":

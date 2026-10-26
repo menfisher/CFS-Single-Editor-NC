@@ -16,9 +16,9 @@
             <div class="editor-header-location">
               <h3>{{ section.field_name }}</h3>
               <select
+                id="meeting-editor-section-picker"
                 class="meeting-heading meeting-editor-section-picker"
                 aria-label="MeetingData meeting"
-                onchange="if (this.value) window.location.href = this.value;"
               >
                 {% for meeting_section in section.field_meeting_sections %}
                   <option
@@ -28,6 +28,8 @@
                     {{ meeting_section.meeting_name }}
                   </option>
                 {% endfor %}
+                <option value="__add_field_list__">+ Add Field list</option>
+                <option value="__organize_field_lists__">Organize Field lists</option>
               </select>
             </div>
           </div>
@@ -601,6 +603,39 @@
         </div>
       </form>
     </dialog>
+
+    <dialog class="app-modal" id="editor-field-list-option-modal">
+      <form method="dialog" class="app-modal-panel" id="editor-field-list-option-modal-form">
+        <div class="app-modal-header">
+          <h3 class="app-modal-title" id="editor-field-list-option-modal-title">Field list</h3>
+          <p class="app-modal-copy" id="editor-field-list-option-modal-copy">Enter a value.</p>
+        </div>
+        <label class="app-modal-field">
+          <span id="editor-field-list-option-modal-label">Name</span>
+          <input type="text" id="editor-field-list-option-modal-input" autocomplete="off">
+        </label>
+        <div class="app-modal-error" id="editor-field-list-option-modal-error" aria-live="polite"></div>
+        <div class="app-modal-actions">
+          <button type="button" class="contact-card-button contact-card-button-cancel" id="editor-field-list-option-modal-cancel">Cancel</button>
+          <button type="submit" class="contact-card-button contact-card-button-edit" id="editor-field-list-option-modal-save" value="save">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="app-modal field-end-list-order-modal" id="editor-field-list-order-modal">
+      <form method="dialog" class="app-modal-panel" id="editor-field-list-order-form">
+        <div class="app-modal-header">
+          <h3 class="app-modal-title">Organize Field lists</h3>
+          <p class="app-modal-copy" id="editor-field-list-order-copy">These lists print at the end of the selected Field.</p>
+        </div>
+        <ul class="field-end-list-order-items" id="editor-field-list-order-items"></ul>
+        <div class="app-modal-error" id="editor-field-list-order-error" aria-live="polite"></div>
+        <div class="app-modal-actions">
+          <button type="button" class="contact-card-button contact-card-button-cancel" id="editor-field-list-order-cancel">Cancel</button>
+          <button type="submit" class="contact-card-button contact-card-button-edit" id="editor-field-list-order-save">Save</button>
+        </div>
+      </form>
+    </dialog>
   </div>
 {% endblock %}
 
@@ -633,6 +668,302 @@
         });
         if (!confirmed) return;
         deleteForm.submit();
+      });
+    });
+  </script>
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      const meetingPicker = document.getElementById("meeting-editor-section-picker");
+      const fieldName = {{ section.field_name|tojson }};
+      const currentMeetingName = {{ section.meeting_name|tojson }};
+      const addFieldListSentinel = "__add_field_list__";
+      const organizeFieldListsSentinel = "__organize_field_lists__";
+      let fieldEndLists = {{ (section.field_end_lists or [])|tojson }};
+      let pendingFallbackUrl = "";
+      const fieldListModal = window.AppModal?.create({
+        dialog: document.getElementById("editor-field-list-option-modal"),
+        form: document.getElementById("editor-field-list-option-modal-form"),
+        titleEl: document.getElementById("editor-field-list-option-modal-title"),
+        copyEl: document.getElementById("editor-field-list-option-modal-copy"),
+        labelEl: document.getElementById("editor-field-list-option-modal-label"),
+        inputEl: document.getElementById("editor-field-list-option-modal-input"),
+        errorEl: document.getElementById("editor-field-list-option-modal-error"),
+        cancelEl: document.getElementById("editor-field-list-option-modal-cancel"),
+        saveEl: document.getElementById("editor-field-list-option-modal-save"),
+      });
+      const fieldListOrderModal = document.getElementById("editor-field-list-order-modal");
+      const fieldListOrderForm = document.getElementById("editor-field-list-order-form");
+      const fieldListOrderCopy = document.getElementById("editor-field-list-order-copy");
+      const fieldListOrderItems = document.getElementById("editor-field-list-order-items");
+      const fieldListOrderError = document.getElementById("editor-field-list-order-error");
+      const fieldListOrderCancel = document.getElementById("editor-field-list-order-cancel");
+      if (!meetingPicker) return;
+
+      const requestOptionDialog = (config) => fieldListModal?.prompt(config) ?? Promise.resolve("");
+      const showMessageDialog = (config) => fieldListModal?.message(config) ?? Promise.resolve();
+
+      const callOptionApi = async (url, body) => {
+        const params = new URLSearchParams();
+        Object.entries(body || {}).forEach(([key, value]) => {
+          if (Array.isArray(value)) {
+            value.forEach((item) => params.append(key, item));
+            return;
+          }
+          params.set(key, value);
+        });
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: params,
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Unable to save the Field list.");
+        }
+        return payload;
+      };
+
+      const applySavedLists = (payload, fallbackNames) => {
+        const savedLists = Array.isArray(payload?.lists)
+          ? payload.lists.map((item) => String(item.list_name || "").trim()).filter(Boolean)
+          : fallbackNames;
+        fieldEndLists = savedLists.slice();
+        return fieldEndLists;
+      };
+
+      const updatePickerMeetingLabel = (oldName, newName) => {
+        if (!meetingPicker || !oldName || !newName || oldName === newName) return;
+        Array.from(meetingPicker.options).forEach((option) => {
+          if ((option.textContent || "").trim() === oldName) {
+            option.textContent = newName;
+          }
+        });
+      };
+
+      const removePickerMeeting = (listName) => {
+        if (!meetingPicker || !listName) return;
+        Array.from(meetingPicker.options)
+          .filter((option) => (option.textContent || "").trim() === listName)
+          .forEach((option) => option.remove());
+      };
+
+      const renameFieldList = async (listName) => {
+        const nextValue = await requestOptionDialog({
+          title: "Rename Field list",
+          copy: `Current name: ${listName}`,
+          label: "New Field list name",
+          initialValue: listName,
+          submitLabel: "Rename",
+        });
+        if (!nextValue || nextValue === listName) return;
+        try {
+          const payload = await callOptionApi("/meetings/v2/field-end-lists/rename", {
+            field_name: fieldName,
+            old_list_name: listName,
+            new_list_name: nextValue,
+          });
+          const savedName = String(payload.list_name || nextValue).trim();
+          const nextOrder = currentFieldListOrder().map((name) => (name === listName ? savedName : name));
+          applySavedLists(payload, nextOrder);
+          updatePickerMeetingLabel(listName, savedName);
+          renderFieldListOrderItems(nextOrder);
+        } catch (error) {
+          if (fieldListOrderError) {
+            fieldListOrderError.textContent = error.message || "Unable to rename the Field list.";
+          }
+        }
+      };
+
+      const deleteFieldList = async (listName) => {
+        const confirmed = await requestOptionDialog({
+          title: "Delete Field list",
+          copy: `Delete Field list “${listName}”? This removes its MeetingData section.`,
+          label: "Field list name",
+          requireInput: false,
+          submitLabel: "Delete",
+        });
+        if (!confirmed) return;
+        try {
+          const payload = await callOptionApi("/meetings/v2/field-end-lists/remove", {
+            field_name: fieldName,
+            list_name: listName,
+          });
+          const nextOrder = currentFieldListOrder().filter((name) => name !== listName);
+          applySavedLists(payload, nextOrder);
+          removePickerMeeting(listName);
+          if (listName === currentMeetingName) {
+            pendingFallbackUrl = String(payload.fallback_editor_url || "").trim() || "/meetings/v2/sections";
+          }
+          renderFieldListOrderItems(nextOrder);
+        } catch (error) {
+          if (fieldListOrderError) {
+            fieldListOrderError.textContent = error.message || "Unable to delete the Field list.";
+          }
+        }
+      };
+
+      const renderFieldListOrderItems = (listNames) => {
+        if (!fieldListOrderItems) return;
+        fieldListOrderItems.innerHTML = "";
+        if (!listNames.length) {
+          const empty = document.createElement("li");
+          empty.className = "field-end-list-order-empty";
+          empty.textContent = "This Field has no Field lists yet.";
+          fieldListOrderItems.appendChild(empty);
+          return;
+        }
+        listNames.forEach((listName, index) => {
+          const item = document.createElement("li");
+          item.className = "field-end-list-order-item";
+          item.dataset.listName = listName;
+          const label = document.createElement("span");
+          label.textContent = listName;
+          const actions = document.createElement("div");
+          actions.className = "field-end-list-order-actions";
+          const upButton = document.createElement("button");
+          upButton.type = "button";
+          upButton.className = "contact-card-button";
+          upButton.textContent = "Up";
+          upButton.disabled = index === 0;
+          upButton.addEventListener("click", () => {
+            const next = currentFieldListOrder();
+            if (index === 0) return;
+            [next[index - 1], next[index]] = [next[index], next[index - 1]];
+            renderFieldListOrderItems(next);
+          });
+          const downButton = document.createElement("button");
+          downButton.type = "button";
+          downButton.className = "contact-card-button";
+          downButton.textContent = "Down";
+          downButton.disabled = index === listNames.length - 1;
+          downButton.addEventListener("click", () => {
+            const next = currentFieldListOrder();
+            if (index >= next.length - 1) return;
+            [next[index + 1], next[index]] = [next[index], next[index + 1]];
+            renderFieldListOrderItems(next);
+          });
+          const renameButton = document.createElement("button");
+          renameButton.type = "button";
+          renameButton.className = "contact-card-button";
+          renameButton.textContent = "Rename";
+          renameButton.addEventListener("click", () => {
+            renameFieldList(listName);
+          });
+          const deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "contact-card-button";
+          deleteButton.textContent = "Delete";
+          deleteButton.addEventListener("click", () => {
+            deleteFieldList(listName);
+          });
+          actions.append(upButton, downButton, renameButton, deleteButton);
+          item.append(label, actions);
+          fieldListOrderItems.appendChild(item);
+        });
+      };
+
+      const currentFieldListOrder = () => Array.from(fieldListOrderItems?.querySelectorAll(".field-end-list-order-item") || [])
+        .map((item) => item.dataset.listName || "")
+        .filter(Boolean);
+
+      const openFieldListOrderModal = () => new Promise((resolve) => {
+        if (!fieldListOrderModal || !fieldListOrderForm) {
+          resolve(null);
+          return;
+        }
+        const lists = fieldEndLists.slice();
+        if (fieldListOrderCopy) {
+          fieldListOrderCopy.textContent = lists.length
+            ? `These lists print at the end of ${fieldName}. Use Up and Down to set the print order.`
+            : "Add a Field list first to set the print order.";
+        }
+        if (fieldListOrderError) fieldListOrderError.textContent = "";
+        renderFieldListOrderItems(lists);
+        const cleanup = () => {
+          fieldListOrderForm.removeEventListener("submit", handleSubmit);
+          fieldListOrderModal.removeEventListener("close", handleClose);
+          fieldListOrderCancel?.removeEventListener("click", handleCancel);
+        };
+        const handleSubmit = (event) => {
+          event.preventDefault();
+          const nextOrder = currentFieldListOrder();
+          cleanup();
+          resolve(nextOrder);
+          if (fieldListOrderModal.open) fieldListOrderModal.close();
+        };
+        const handleCancel = () => {
+          cleanup();
+          resolve(null);
+          if (fieldListOrderModal.open) fieldListOrderModal.close();
+        };
+        const handleClose = () => {
+          cleanup();
+          resolve(null);
+        };
+        fieldListOrderForm.addEventListener("submit", handleSubmit);
+        fieldListOrderCancel?.addEventListener("click", handleCancel);
+        fieldListOrderModal.addEventListener("close", handleClose);
+        if (!fieldListOrderModal.open) fieldListOrderModal.showModal();
+      });
+
+      meetingPicker.dataset.previousValue = meetingPicker.value;
+
+      meetingPicker.addEventListener("change", async () => {
+        const previousValue = meetingPicker.dataset.previousValue ?? "";
+        if (meetingPicker.value === addFieldListSentinel) {
+          const nextValue = await requestOptionDialog({
+            title: "Add Field list",
+            copy: `Name the list that should print at the end of ${fieldName}. You can add lines on its MeetingData Editor after you save.`,
+            label: "Field list name",
+          });
+          meetingPicker.value = previousValue;
+          if (!nextValue) return;
+          try {
+            const payload = await callOptionApi("/meetings/v2/field-end-lists", {
+              field_name: fieldName,
+              list_name: nextValue,
+            });
+            const editorUrl = String(payload.editor_url || "").trim();
+            if (editorUrl) {
+              window.location.href = editorUrl;
+              return;
+            }
+            throw new Error("Unable to open the new Field list.");
+          } catch (error) {
+            await showMessageDialog({
+              title: "Add Field list",
+              copy: error.message || "Unable to add the Field list.",
+            });
+          }
+          return;
+        }
+        if (meetingPicker.value === organizeFieldListsSentinel) {
+          const nextOrder = await openFieldListOrderModal();
+          meetingPicker.value = previousValue;
+          if (nextOrder && nextOrder.length) {
+            try {
+              const payload = await callOptionApi("/meetings/v2/field-end-lists/reorder", {
+                field_name: fieldName,
+                list_names: nextOrder,
+              });
+              applySavedLists(payload, nextOrder);
+            } catch (error) {
+              await showMessageDialog({
+                title: "Organize Field lists",
+                copy: error.message || "Unable to save the Field list order.",
+              });
+            }
+          }
+          if (pendingFallbackUrl) {
+            window.location.href = pendingFallbackUrl;
+          }
+          return;
+        }
+        if (meetingPicker.value) {
+          window.location.href = meetingPicker.value;
+        }
       });
     });
   </script>

@@ -18,7 +18,6 @@
           {% for item in filters.fields %}
             <option value="{{ item }}" {% if field_filter == item %}selected{% endif %}>{{ item }}</option>
           {% endfor %}
-          <option value="__add_field__">+ Add Field</option>
           <option value="__delete_field__">- Field</option>
           <option value="__rename_field__">Rename Field</option>
         </select>
@@ -161,12 +160,15 @@
       const meetingsByField = {{ script_filters.meetings_by_field|default({})|tojson }};
       const allMeetings = {{ script_filters.meetings|default([])|tojson }};
       const selectedMeeting = {{ script_meeting_filter|tojson }};
-      const addFieldSentinel = "__add_field__";
       const deleteFieldSentinel = "__delete_field__";
       const renameFieldSentinel = "__rename_field__";
       const addMeetingSentinel = "__add_meeting__";
       const deleteMeetingSentinel = "__delete_meeting__";
       const renameMeetingSentinel = "__rename_meeting__";
+      const fieldSentinelOptions = [
+        { value: deleteFieldSentinel, label: "- Field" },
+        { value: renameFieldSentinel, label: "Rename Field" },
+      ];
 
       const insertSortedOption = (select, value, defaultLabel, sentinelOptions, selectedValue) => {
         if (!select || !value) return;
@@ -263,12 +265,20 @@
       const showMessageDialog = (config) => meetingdataModal?.message(config) ?? Promise.resolve();
 
       const callOptionApi = async (url, body) => {
+        const params = new URLSearchParams();
+        Object.entries(body || {}).forEach(([key, value]) => {
+          if (Array.isArray(value)) {
+            value.forEach((item) => params.append(key, item));
+            return;
+          }
+          params.set(key, value);
+        });
         const response = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
           },
-          body: new URLSearchParams(body),
+          body: params,
         });
         const payload = await response.json();
         if (!response.ok) {
@@ -283,38 +293,6 @@
 
       fieldSelect.addEventListener("change", async () => {
         const previousValue = fieldSelect.dataset.previousValue ?? "";
-        if (fieldSelect.value === addFieldSentinel) {
-          const nextValue = await requestOptionDialog({
-            title: "Add Field",
-            copy: "Name the new MeetingData Field. It will be inserted alphabetically into the list.",
-            label: "Field name",
-          });
-          if (!nextValue) {
-            fieldSelect.value = previousValue || "";
-            return;
-          }
-          try {
-            const payload = await callOptionApi("/meetings/v2/section-name-options", { kind: "field", value: nextValue });
-            const savedValue = String(payload.value || nextValue).trim();
-            insertSortedOption(fieldSelect, savedValue, "All fields", [
-              { value: addFieldSentinel, label: "+ Add Field" },
-              { value: deleteFieldSentinel, label: "- Field" },
-              { value: renameFieldSentinel, label: "Rename Field" },
-            ], savedValue);
-            meetingsByField[savedValue] = meetingsByField[savedValue] || [];
-            renderMeetingOptions(savedValue, "");
-            fieldSelect.dataset.previousValue = savedValue;
-            meetingSelect.dataset.previousValue = "";
-            form.requestSubmit();
-          } catch (error) {
-            await showMessageDialog({
-              title: "Add Field",
-              copy: error.message || "Unable to add the MeetingData Field.",
-            });
-            fieldSelect.value = previousValue || "";
-          }
-          return;
-        }
         if (fieldSelect.value === deleteFieldSentinel) {
           if (!previousValue) {
             await showMessageDialog({
@@ -376,11 +354,7 @@
           try {
             const payload = await callOptionApi("/meetings/v2/section-name-options/rename", { kind: "field", old_value: previousValue, new_value: nextValue });
             const savedValue = String(payload.new_value || nextValue).trim();
-            insertSortedOption(fieldSelect, savedValue, "All fields", [
-              { value: addFieldSentinel, label: "+ Add Field" },
-              { value: deleteFieldSentinel, label: "- Field" },
-              { value: renameFieldSentinel, label: "Rename Field" },
-            ], savedValue);
+            insertSortedOption(fieldSelect, savedValue, "All fields", fieldSentinelOptions, savedValue);
             if (meetingsByField[previousValue]) {
               meetingsByField[savedValue] = [...meetingsByField[previousValue]];
               delete meetingsByField[previousValue];
@@ -413,7 +387,7 @@
           if (!fieldSelect.value) {
             await showMessageDialog({
               title: "Add Meeting",
-              copy: "Pick a Field first or create a new Field (+ Field) before creating a new Meeting.",
+              copy: "Pick a Field first before creating a new Meeting.",
             });
             meetingSelect.value = previousValue || "";
             return;

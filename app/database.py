@@ -101,6 +101,7 @@ def _apply_database_migrations(conn: sqlite3.Connection) -> None:
     _ensure_google_sync_columns(conn)
     _ensure_contact_assignment_option_columns(conn)
     _ensure_meeting_toc_exclusion_table(conn)
+    _ensure_field_end_list_table(conn)
     _ensure_contact_edit_log_table(conn)
     _ensure_meeting_edit_log_table(conn)
     _ensure_app_revisions_table(conn)
@@ -599,6 +600,26 @@ def _clear_legacy_address_book_pdf_share_defaults(conn: sqlite3.Connection) -> N
           address_book_pdf_share_folder_name = ''
         WHERE LOWER(TRIM(address_book_pdf_share_folder_name)) = 'pdf & addbook files'
           AND TRIM(address_book_pdf_share_folder_id) = ''
+        """
+    )
+
+
+def _ensure_field_end_list_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS field_end_lists (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          field_name TEXT NOT NULL,
+          list_name TEXT NOT NULL,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          UNIQUE (field_name, list_name)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_field_end_lists_field_sort
+        ON field_end_lists (field_name, sort_order, id)
         """
     )
 
