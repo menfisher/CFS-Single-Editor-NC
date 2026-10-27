@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.244",
+      "version": "1.245",
       "date_display": "10/26/2026",
+      "description": "A table-start row can Print new page so Field lists start on their own page; grouped tables stay together on that page when they fit. The MeetingData Editor no longer shows No meeting association."
+    },
+    {
+      "date_display": "10/26/2026",
+      "version": "1.244",
       "description": "Printed phone letters sit closer to the number while last names stay lined up. A Blank phone label prints custom text in the phone column, with an optional letter/code box, a Text for phone column heading, and a 12-character cap. Phones print in Edit-page order."
     },
     {
