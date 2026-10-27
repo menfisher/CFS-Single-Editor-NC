@@ -141,63 +141,16 @@
                         </label>
                       {% endfor %}
                       {% for kind in ["underlined", "table_start", "table_end"] %}
-                        {% if kind == "table_start" %}
-                          <div class="wysiwyg-kind-chip-stack">
-                            <label class="wysiwyg-kind-chip {% if kind in row.row_kind_tags %}is-active{% endif %}">
-                              <input
-                                type="checkbox"
-                                name="row_kind_{{ row.id }}"
-                                value="{{ kind }}"
-                                data-row-kind-modifier
-                                {% if kind in row.row_kind_tags %}checked{% endif %}
-                              >
-                              <span>table start</span>
-                            </label>
-                            <label
-                              class="wysiwyg-row-group-toggle {% if not row.is_table_start_row %}wysiwyg-row-group-toggle-hidden{% endif %}"
-                              data-table-start-option-wrap
-                              for="no_meeting_association_{{ row.id }}"
-                            >
-                              <input
-                                id="no_meeting_association_{{ row.id }}"
-                                name="no_meeting_association_{{ row.id }}"
-                                type="checkbox"
-                                value="1"
-                                data-table-start-option
-                                {% if row.no_meeting_association %}checked{% endif %}
-                                {% if not row.is_table_start_row %}disabled{% endif %}
-                              >
-                              <span>no meeting association</span>
-                            </label>
-                            <label
-                              class="wysiwyg-row-group-toggle {% if not row.is_table_start_row %}wysiwyg-row-group-toggle-hidden{% endif %}"
-                              data-table-start-option-wrap
-                              for="group_with_table_below_{{ row.id }}"
-                            >
-                              <input
-                                id="group_with_table_below_{{ row.id }}"
-                                name="group_with_table_below_{{ row.id }}"
-                                type="checkbox"
-                                value="1"
-                                data-table-start-option
-                                {% if row.group_with_table_below %}checked{% endif %}
-                                {% if not row.is_table_start_row %}disabled{% endif %}
-                            >
-                              <span>group with table below</span>
-                            </label>
-                          </div>
-                        {% else %}
-                          <label class="wysiwyg-kind-chip {% if kind in row.row_kind_tags %}is-active{% endif %}">
-                            <input
-                              type="checkbox"
-                              name="row_kind_{{ row.id }}"
-                              value="{{ kind }}"
-                              data-row-kind-modifier
-                              {% if kind in row.row_kind_tags %}checked{% endif %}
-                            >
-                            <span>{{ "table end" if kind == "table_end" else kind }}</span>
-                          </label>
-                        {% endif %}
+                        <label class="wysiwyg-kind-chip {% if kind in row.row_kind_tags %}is-active{% endif %}">
+                          <input
+                            type="checkbox"
+                            name="row_kind_{{ row.id }}"
+                            value="{{ kind }}"
+                            data-row-kind-modifier
+                            {% if kind in row.row_kind_tags %}checked{% endif %}
+                          >
+                          <span>{{ "table start" if kind == "table_start" else "table end" if kind == "table_end" else kind }}</span>
+                        </label>
                       {% endfor %}
                     </div>
                   </div>
@@ -326,6 +279,35 @@
                     >
                       Delete Row
                     </button>
+                  </div>
+                  <div
+                    class="wysiwyg-table-start-options {% if not row.is_table_start_row %}wysiwyg-row-group-toggle-hidden{% endif %}"
+                    data-table-start-option-wrap
+                  >
+                    <label class="wysiwyg-row-group-toggle" for="print_new_page_{{ row.id }}">
+                      <input
+                        id="print_new_page_{{ row.id }}"
+                        name="print_new_page_{{ row.id }}"
+                        type="checkbox"
+                        value="1"
+                        data-table-start-option
+                        {% if row.print_new_page %}checked{% endif %}
+                        {% if not row.is_table_start_row %}disabled{% endif %}
+                      >
+                      <span>print new page</span>
+                    </label>
+                    <label class="wysiwyg-row-group-toggle" for="group_with_table_below_{{ row.id }}">
+                      <input
+                        id="group_with_table_below_{{ row.id }}"
+                        name="group_with_table_below_{{ row.id }}"
+                        type="checkbox"
+                        value="1"
+                        data-table-start-option
+                        {% if row.group_with_table_below %}checked{% endif %}
+                        {% if not row.is_table_start_row %}disabled{% endif %}
+                      >
+                      <span>group with table below</span>
+                    </label>
                   </div>
                 </div>
 

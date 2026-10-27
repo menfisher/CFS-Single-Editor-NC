@@ -89,7 +89,7 @@ def _parse_meeting_v2_section_form(form) -> dict:
                 "row_order": int(form.get(f"row_order_{row_id}", 0) or 0),
                 "row_kind": row_kind_values or [str(form.get(f"row_kind_{row_id}", "content") or "content")],
                 "group_with_table_below": int(form.get(f"group_with_table_below_{row_id}", 0) or 0),
-                "no_meeting_association": int(form.get(f"no_meeting_association_{row_id}", 0) or 0),
+                "print_new_page": int(form.get(f"print_new_page_{row_id}", 0) or 0),
                 "format_code": str(form.get(f"format_code_{row_id}", "") or ""),
                 "label_text": str(form.get(f"label_text_{row_id}", "") or ""),
                 "notes": str(form.get(f"row_notes_{row_id}", "") or ""),

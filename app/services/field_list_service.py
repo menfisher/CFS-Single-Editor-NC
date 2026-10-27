@@ -2239,6 +2239,7 @@ def _field_list_meeting_preview_payload() -> dict[str, Any]:
                         "is_table_start_row": bool(row.get("is_table_start_row")),
                         "is_table_end_row": bool(row.get("is_table_end_row")),
                         "no_meeting_association": bool(row.get("no_meeting_association")),
+                        "print_new_page": bool(row.get("print_new_page")),
                         "keep_together_group": keep_together_group,
                     }
                     if row.get("is_blank_row"):

@@ -6421,7 +6421,7 @@ button.site-nav-dropdown-item:hover {
 
 .wysiwyg-row-kind-picker {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -6441,30 +6441,24 @@ button.site-nav-dropdown-item:hover {
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.wysiwyg-kind-chip-stack {
-  display: inline-flex;
-  position: relative;
-  flex-direction: column;
+.wysiwyg-table-start-options {
+  grid-column: 1 / -1;
+  display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   flex-wrap: nowrap;
-  gap: 0;
-  min-height: 28px;
-  width: fit-content;
+  gap: 16px;
+  min-width: 0;
+  padding: 2px 0 1px;
 }
 
-.wysiwyg-kind-chip-stack .wysiwyg-row-group-toggle {
-  position: absolute;
-  top: -24px;
+.wysiwyg-table-start-options.wysiwyg-row-group-toggle-hidden {
+  display: none;
+}
+
+.wysiwyg-table-start-options .wysiwyg-row-group-toggle {
+  flex: 0 0 auto;
   margin: 0;
-}
-
-.wysiwyg-kind-chip-stack .wysiwyg-row-group-toggle:first-of-type {
-  right: calc(100% + 64px);
-}
-
-.wysiwyg-kind-chip-stack .wysiwyg-row-group-toggle:nth-of-type(2) {
-  left: calc(100% + 64px);
 }
 
 .wysiwyg-kind-chip input {

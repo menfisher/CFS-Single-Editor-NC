@@ -152,6 +152,7 @@ def _decorate_row_item(row_item: dict) -> dict:
     row_item["is_underlined_row"] = "underlined" in row_item["row_kind_tags"]
     row_item["is_table_start_row"] = "table_start" in row_item["row_kind_tags"]
     row_item["is_table_end_row"] = "table_end" in row_item["row_kind_tags"]
+    row_item["print_new_page"] = bool(int(row_item.get("print_new_page") or 0)) and row_item["is_table_start_row"]
     return row_item
 
 
@@ -222,6 +223,7 @@ def _build_meeting_print_blocks(rows: list[dict]) -> list[dict]:
                 "kind": "table",
                 "rows": current_table_rows,
                 "group_with_next": bool(start_row.get("group_with_table_below")),
+                "print_new_page": bool(start_row.get("print_new_page")),
             }
         )
         current_table_rows = []
@@ -245,6 +247,7 @@ def _build_meeting_print_blocks(rows: list[dict]) -> list[dict]:
                 "kind": "row",
                 "rows": [row],
                 "group_with_next": False,
+                "print_new_page": False,
             }
         )
 
@@ -266,6 +269,7 @@ def _build_meeting_print_blocks(rows: list[dict]) -> list[dict]:
                     "kind": "paired_tables",
                     "items": [block, next_block],
                     "keep_together": True,
+                    "print_new_page": bool(block.get("print_new_page")),
                 }
             )
             index += 2
@@ -276,6 +280,7 @@ def _build_meeting_print_blocks(rows: list[dict]) -> list[dict]:
                 "kind": "single",
                 "items": [block],
                 "keep_together": block["kind"] == "table",
+                "print_new_page": bool(block.get("print_new_page")),
             }
         )
         index += 1
@@ -1359,6 +1364,14 @@ def _ensure_meeting_v2_sections_once() -> None:
                 """
             )
             conn.commit()
+        if row_columns and "print_new_page" not in row_columns:
+            conn.execute(
+                """
+                ALTER TABLE meeting_section_rows_v2
+                ADD COLUMN print_new_page INTEGER NOT NULL DEFAULT 0
+                """
+            )
+            conn.commit()
         layout_columns = {
             str(row["name"])
             for row in conn.execute("PRAGMA table_info(meeting_section_layout_v2)").fetchall()
@@ -2364,7 +2377,7 @@ def save_meeting_v2_section(
                     "id": int(row["id"]),
                     "row_kind": _normalize_row_kind_value(row.get("row_kind") or "content"),
                     "group_with_table_below": int(row.get("group_with_table_below") or 0),
-                    "no_meeting_association": int(row.get("no_meeting_association") or 0),
+                    "print_new_page": int(row.get("print_new_page") or 0),
                     "format_code": str(row.get("format_code") or ""),
                     "label_text": str(row.get("label_text") or ""),
                     "notes": str(row.get("notes") or ""),
@@ -2378,7 +2391,7 @@ def save_meeting_v2_section(
                 "row_order": next_order,
                 "row_kind": _normalize_row_kind_value(row["row_kind"]),
                 "group_with_table_below": int(row.get("group_with_table_below") or 0),
-                "no_meeting_association": int(row.get("no_meeting_association") or 0),
+                "print_new_page": int(row.get("print_new_page") or 0),
                 "format_code": row["format_code"],
                 "label_text": row["label_text"],
                 "notes": row["notes"],
@@ -2501,14 +2514,14 @@ def save_meeting_v2_section(
             conn.execute(
                 """
                 UPDATE meeting_section_rows_v2
-                SET row_order = ?, row_kind = ?, group_with_table_below = ?, no_meeting_association = ?, format_code = ?, label_text = ?, notes = ?
+                SET row_order = ?, row_kind = ?, group_with_table_below = ?, print_new_page = ?, format_code = ?, label_text = ?, notes = ?
                 WHERE id = ? AND section_id = ?
                 """,
                 (
                     int(row["row_order"]),
                     _normalize_row_kind_value(row["row_kind"]),
                     1 if _row_has_tag(row["row_kind"], "table_start") and int(row.get("group_with_table_below") or 0) else 0,
-                    1 if _row_has_tag(row["row_kind"], "table_start") and int(row.get("no_meeting_association") or 0) else 0,
+                    1 if _row_has_tag(row["row_kind"], "table_start") and int(row.get("print_new_page") or 0) else 0,
                     row.get("format_code") or "",
                     row.get("label_text") or "",
                     row.get("notes") or "",
@@ -2960,7 +2973,7 @@ def add_meeting_v2_row(
         if clone_from_row_id:
             source_row = conn.execute(
                 """
-                SELECT row_kind, group_with_table_below, no_meeting_association, format_code
+                SELECT row_kind, group_with_table_below, no_meeting_association, print_new_page, format_code
                 FROM meeting_section_rows_v2
                 WHERE id = ? AND section_id = ?
                 """,
@@ -2971,13 +2984,14 @@ def add_meeting_v2_row(
                 conn.execute(
                     """
                     UPDATE meeting_section_rows_v2
-                    SET row_kind = ?, group_with_table_below = ?, no_meeting_association = ?, format_code = ?
+                    SET row_kind = ?, group_with_table_below = ?, no_meeting_association = ?, print_new_page = ?, format_code = ?
                     WHERE id = ? AND section_id = ?
                     """,
                     (
                         source_kind,
                         int(source_row["group_with_table_below"] or 0),
                         int(source_row["no_meeting_association"] or 0),
+                        int(source_row["print_new_page"] or 0),
                         str(source_row["format_code"] or ""),
                         row_id,
                         section_id,
@@ -3356,10 +3370,11 @@ def update_meeting_v2_row_kind(section_id: int, row_id: int, row_kind: str) -> N
             SET
               row_kind = ?,
               group_with_table_below = CASE WHEN instr(?, 'table_start') > 0 THEN group_with_table_below ELSE 0 END,
-              no_meeting_association = CASE WHEN instr(?, 'table_start') > 0 THEN no_meeting_association ELSE 0 END
+              no_meeting_association = CASE WHEN instr(?, 'table_start') > 0 THEN no_meeting_association ELSE 0 END,
+              print_new_page = CASE WHEN instr(?, 'table_start') > 0 THEN print_new_page ELSE 0 END
             WHERE id = ? AND section_id = ?
             """,
-            (normalized_row_kind, normalized_row_kind, normalized_row_kind, row_id, section_id),
+            (normalized_row_kind, normalized_row_kind, normalized_row_kind, normalized_row_kind, row_id, section_id),
         )
         conn.commit()
 

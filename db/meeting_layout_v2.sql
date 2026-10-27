@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS meeting_section_rows_v2 (
   row_kind TEXT NOT NULL DEFAULT 'content',
   group_with_table_below INTEGER NOT NULL DEFAULT 0,
   no_meeting_association INTEGER NOT NULL DEFAULT 0,
+  print_new_page INTEGER NOT NULL DEFAULT 0,
   format_code TEXT,
   label_text TEXT,
   notes TEXT,

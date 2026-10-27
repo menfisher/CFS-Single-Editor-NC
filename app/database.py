@@ -102,6 +102,7 @@ def _apply_database_migrations(conn: sqlite3.Connection) -> None:
     _ensure_contact_assignment_option_columns(conn)
     _ensure_meeting_toc_exclusion_table(conn)
     _ensure_field_end_list_table(conn)
+    _ensure_meeting_row_print_new_page_column(conn)
     _ensure_contact_edit_log_table(conn)
     _ensure_meeting_edit_log_table(conn)
     _ensure_app_revisions_table(conn)
@@ -623,6 +624,23 @@ def _ensure_field_end_list_table(conn: sqlite3.Connection) -> None:
         ON field_end_lists (field_name, sort_order, id)
         """
     )
+
+
+def _ensure_meeting_row_print_new_page_column(conn: sqlite3.Connection) -> None:
+    try:
+        row_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(meeting_section_rows_v2)").fetchall()
+        }
+    except sqlite3.OperationalError:
+        return
+    if row_columns and "print_new_page" not in row_columns:
+        conn.execute(
+            """
+            ALTER TABLE meeting_section_rows_v2
+            ADD COLUMN print_new_page INTEGER NOT NULL DEFAULT 0
+            """
+        )
 
 
 def _ensure_meeting_toc_exclusion_table(conn: sqlite3.Connection) -> None:

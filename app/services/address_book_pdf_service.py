@@ -2366,6 +2366,16 @@ def build_address_book_pdf(
             add_footer(field_name)
         new_page()
 
+    def start_print_new_page_for_table() -> None:
+        content_lines = _page_content_lines()
+        if not content_lines:
+            return
+        heading_texts = {heading, _continued_heading_text(heading)}
+        if all(line.text in heading_texts for line in content_lines):
+            return
+        add_footer(field_name)
+        new_page(field_name, heading)
+
     def chunk_is_table_chunk(chunk: list[dict]) -> bool:
         return any(bool(row.get("is_table_start_row")) for row in chunk)
 
@@ -2813,7 +2823,13 @@ def build_address_book_pdf(
                     bool(row.get("is_table_start_row")) and bool(row.get("no_meeting_association"))
                     for row in first_chunk
                 )
+                first_chunk_print_new_page = any(
+                    bool(row.get("is_table_start_row")) and bool(row.get("print_new_page"))
+                    for row in first_chunk
+                )
                 first_chunk_is_table = chunk_is_table_chunk(first_chunk)
+                if first_chunk_print_new_page and not first_chunk_unassociated:
+                    start_print_new_page_for_table()
                 if not first_chunk_unassociated:
                     if first_chunk_is_table and first_chunk:
                         first_row_lines = _meeting_row_line_count(first_chunk[0], **meeting_row_count_kwargs) + 1
@@ -2827,10 +2843,16 @@ def build_address_book_pdf(
                         bool(row.get("is_table_start_row")) and bool(row.get("no_meeting_association"))
                         for row in chunk
                     )
+                    print_new_page = any(
+                        bool(row.get("is_table_start_row")) and bool(row.get("print_new_page"))
+                        for row in chunk
+                    )
                     is_table_chunk = chunk_is_table_chunk(chunk)
                     keep_together = any(_clean(row.get("keep_together_group")) for row in chunk)
                     if no_meeting_association:
                         start_standalone_table_page()
+                    elif print_new_page:
+                        start_print_new_page_for_table()
                     if is_table_chunk:
                         ensure_table_chunk_space(
                             chunk,
