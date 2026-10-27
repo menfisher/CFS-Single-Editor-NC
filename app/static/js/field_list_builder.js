@@ -179,6 +179,39 @@ window.addEventListener("DOMContentLoaded", () => {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+  const printNotePlainText = (value) => {
+    const source = String(value ?? "");
+    if (!/[<>]/.test(source)) return source;
+    const template = document.createElement("template");
+    template.innerHTML = source;
+    return template.content.textContent ?? "";
+  };
+  const sanitizePrintNoteHtml = (value) => {
+    const source = String(value ?? "");
+    if (!/[<>]/.test(source)) return escapeHtml(source);
+    const template = document.createElement("template");
+    template.innerHTML = source;
+    const render = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.textContent || "");
+      if (node.nodeType !== Node.ELEMENT_NODE) return "";
+      const tag = node.tagName.toUpperCase();
+      const children = Array.from(node.childNodes).map(render).join("");
+      if (tag === "STRONG" || tag === "B") return `<strong>${children}</strong>`;
+      if (tag === "EM" || tag === "I") return `<em>${children}</em>`;
+      if (tag === "U") return `<u>${children}</u>`;
+      if (tag === "SPAN") {
+        const raw = node.getAttribute("data-note-size-delta");
+        if (raw === null || raw === "") return children;
+        const delta = Math.round(Number(raw) * 2) / 2;
+        if (!Number.isFinite(delta) || delta === 0) return children;
+        const clamped = Math.max(-6, Math.min(8, delta));
+        const label = String(clamped);
+        return `<span data-note-size-delta="${escapeHtml(label)}" style="font-size: calc(1em + ${escapeHtml(label)}pt)">${children}</span>`;
+      }
+      return children;
+    };
+    return Array.from(template.content.childNodes).map(render).join("");
+  };
 
   const getSelectedField = () => pickerFields.find((field) => field.name === selectedFieldName) || null;
   const getSelectedMeeting = () => {
@@ -672,7 +705,8 @@ window.addEventListener("DOMContentLoaded", () => {
       return `${headHtml}; ${renderRelationshipSuffixHtml(contact, suffixText)}`;
     }
     const commaIndex = value.indexOf(",");
-    if (!canBoldLastName || commaIndex < 0) return escapeHtml(value);
+    if (!canBoldLastName) return escapeHtml(value);
+    if (commaIndex < 0) return `<span class="field-list-contact-last-name">${escapeHtml(value)}</span>`;
     const lastName = value.slice(0, commaIndex);
     const rest = value.slice(commaIndex);
     return `<span class="field-list-contact-last-name">${escapeHtml(lastName)}</span>${escapeHtml(rest)}`;
@@ -691,7 +725,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const fontSizePt = Number(settings.baseFontSizePt || 10);
     const fontSizePx = (fontSizePt * 96) / 72;
     const columnWidthPx = getEffectiveColumnWidthIn() * 96;
-    // Match CSS: fixed 16ch phone stack (2-letter code + 1 space), then the name.
+    // Wrap against a 16ch reserve; the visible name starts one space after the code.
     const fixedPhoneColumnPx = measureTextWidth("0".repeat(16), "normal");
     return Math.max(120, columnWidthPx - fixedPhoneColumnPx);
   };
@@ -851,23 +885,25 @@ window.addEventListener("DOMContentLoaded", () => {
     (contact?.print_after_address || []).map((item) => String(item || "").trim()).filter(Boolean)
   );
 
-  const formatPrintBookNoteText = (values) => values.map((value) => `(${value})`).join(" ");
+  const formatPrintBookNoteText = (values) => values.map((value) => `(${printNotePlainText(value)})`).join(" ");
+  const formatPrintBookNoteHtml = (values) => values.map((value) => `(${sanitizePrintNoteHtml(value)})`).join(" ");
 
   const resolvePrintBookNotePlacement = (contact, nameValue) => {
     const pbText = formatPrintBookNoteText(getPrintBookNoteValues(contact));
+    const pbHtml = formatPrintBookNoteHtml(getPrintBookNoteValues(contact));
     if (!pbText) return { inlineHtml: "", ownLineHtml: "" };
     const firstNameLine = wrapContactNameLine(nameValue, contact)[0] || nameValue;
     const textWidthPx = getTextColumnWidthPx(contact);
     const fitsOnNameLine = textFitsWidth(`${firstNameLine} ${pbText}`, textWidthPx, "normal");
     if (fitsOnNameLine) {
       return {
-        inlineHtml: `<span class="field-list-print-book-note">&nbsp;${escapeHtml(pbText)}</span>`,
+        inlineHtml: `<span class="field-list-print-book-note">&nbsp;${pbHtml}</span>`,
         ownLineHtml: "",
       };
     }
     return {
       inlineHtml: "",
-      ownLineHtml: `<div class="field-list-print-book-note field-list-print-note-line">${escapeHtml(pbText)}</div>`,
+      ownLineHtml: `<div class="field-list-print-book-note field-list-print-note-line">${pbHtml}</div>`,
     };
   };
 
@@ -875,7 +911,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const values = getPrintAfterAddressValues(contact);
     if (!values.length) return "";
     return values
-      .map((value) => `<div class="field-list-print-after-note field-list-print-note-line">${escapeHtml(value)}</div>`)
+      .map((value) => `<div class="field-list-print-after-note field-list-print-note-line">${sanitizePrintNoteHtml(value)}</div>`)
       .join("");
   };
 

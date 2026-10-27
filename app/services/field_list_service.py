@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime
 from html import escape, unescape
@@ -683,11 +684,14 @@ def _is_blank_phone_type(phone_type: object) -> bool:
     return _normalize_phone_type(phone_type) in {"", "blank", "no label"}
 
 
-BLANK_PHONE_COLUMN_MAX_CHARS = 12
-
-
 def _clip_blank_phone_column_text(value: object) -> str:
-    return _clean(value)[:BLANK_PHONE_COLUMN_MAX_CHARS]
+    from app.services.address_book_pdf_service import _clip_to_phone_column_width, _text_width
+
+    return _clip_to_phone_column_width(
+        value,
+        7,
+        lambda text, size: _text_width(text, size, "Arial"),
+    )
 
 
 def _known_phone_code(phone_type: object) -> str | None:
@@ -866,13 +870,6 @@ def _phone_code_person_label(
     if phone_type_value and _known_phone_code(phone_type) is None:
         if _phone_type_matches_name_line(phone_type_value, contact):
             return phone_type_value
-        if (
-            _phone_label_letters(phone_type_value)
-            and not _is_home_phone_type(phone_type)
-            and not _is_work_phone_type(phone_type)
-            and not _is_mobile_phone_type(phone_type)
-        ):
-            return phone_type_value
     return _contact_given_phone_label(contact)
 
 
@@ -889,14 +886,6 @@ def _resolve_phone_owner_labels(contact: dict[str, Any], raw_phones: list[dict[s
         phone_type_value = _clean(phone_type)
         if phone_type_value and _known_phone_code(phone_type) is None:
             if _phone_type_matches_name_line(phone_type_value, contact):
-                resolved.append(phone_type_value)
-                continue
-            if (
-                _phone_label_letters(phone_type_value)
-                and not _is_home_phone_type(phone_type)
-                and not _is_work_phone_type(phone_type)
-                and not _is_mobile_phone_type(phone_type)
-            ):
                 resolved.append(phone_type_value)
                 continue
         resolved.append("")
@@ -984,7 +973,7 @@ def _format_custom_phone_code(label: object, all_custom_labels: list[str], is_fi
 
 
 def _is_home_phone_type(phone_type: object) -> bool:
-    return _normalize_phone_type(phone_type) in {"home", "house"}
+    return _normalize_phone_type(phone_type) in {"home", "house", "home phone"}
 
 
 def _is_work_phone_type(phone_type: object) -> bool:
@@ -1140,7 +1129,7 @@ def _field_list_address_column_width_pt(settings: dict[str, Any]) -> float:
     font_size = float(settings.get("base_font_size_pt") or 10.0)
     font_family = str(settings.get("font_family") or "Arial")
     column_pt = float(settings.get("column_width_in") or 4.0) * 72.0
-    # Match CSS/JS: fixed 16ch phone stack (2-letter code + 1 space), then the name.
+    # Wrap against a 16ch reserve; the visible name starts one space after the code.
     phone_pt = _text_width("0" * 16, font_size, font_family)
     return max(72.0, column_pt - phone_pt)
 
@@ -1544,9 +1533,53 @@ _NOTE_STYLE_TAGS = {
     "em": "italic",
     "u": "underline",
 }
-_KNOWN_NOTE_TAG = re.compile(r"</?(?:strong|b|em|i|u|br)\b[^>]*>", re.IGNORECASE)
+_KNOWN_NOTE_TAG = re.compile(
+    r"</?(?:strong|b|em|i|u|br)\b[^>]*>"
+    r"|</span\s*>"
+    r"|<span\b[^>]*\bdata-note-size-delta\s*=\s*['\"]?-?\d+(?:\.\d+)?['\"][^>]*>",
+    re.IGNORECASE,
+)
 _NOTE_BREAK = re.compile(r"<br\s*/?>|</(?:div|p)\s*>", re.IGNORECASE)
 _NOTE_BLOCK_OPEN = re.compile(r"<(?:div|p)[^>]*>", re.IGNORECASE)
+NOTE_SIZE_STEP = 0.5
+NOTE_SIZE_MIN_DELTA = -6.0
+NOTE_SIZE_MAX_DELTA = 8.0
+NOTE_PRINT_MIN_PT = 6.0
+NOTE_PRINT_MAX_PT = 18.0
+
+
+def _parse_note_size_delta(value: object) -> float | None:
+    raw = str(value or "").strip()
+    if raw == "":
+        return None
+    try:
+        number = float(raw)
+    except ValueError:
+        return None
+    if not math.isfinite(number):
+        return None
+    stepped = round(number / NOTE_SIZE_STEP) * NOTE_SIZE_STEP
+    return max(NOTE_SIZE_MIN_DELTA, min(NOTE_SIZE_MAX_DELTA, stepped))
+
+
+def _format_note_size_delta(value: object) -> str:
+    parsed = _parse_note_size_delta(value)
+    if parsed is None or parsed == 0:
+        return ""
+    return str(int(parsed) if parsed == int(parsed) else parsed)
+
+
+def print_note_font_size(base_size: float, run: dict[str, Any] | None = None) -> float:
+    """Return a printed note size: book font plus the line's 0.5pt delta, clamped."""
+    try:
+        delta = float((run or {}).get("size_delta") or 0)
+    except (TypeError, ValueError):
+        delta = 0.0
+    try:
+        base = float(base_size)
+    except (TypeError, ValueError):
+        base = 10.0
+    return max(NOTE_PRINT_MIN_PT, min(NOTE_PRINT_MAX_PT, base + delta))
 
 
 class _InlineNoteParser(HTMLParser):
@@ -1554,16 +1587,31 @@ class _InlineNoteParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.runs: list[dict[str, Any]] = []
         self.active: set[str] = set()
+        self.size_stack: list[float] = []
+
+    def _current_size(self) -> float:
+        return self.size_stack[-1] if self.size_stack else 0.0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        style = _NOTE_STYLE_TAGS.get(str(tag or "").lower())
+        name = str(tag or "").lower()
+        style = _NOTE_STYLE_TAGS.get(name)
         if style:
             self.active.add(style)
+            return
+        if name != "span":
+            return
+        attr_map = {str(key or "").lower(): (value or "") for key, value in attrs}
+        parsed = _parse_note_size_delta(attr_map.get("data-note-size-delta"))
+        self.size_stack.append(self._current_size() if parsed is None else parsed)
 
     def handle_endtag(self, tag: str) -> None:
-        style = _NOTE_STYLE_TAGS.get(str(tag or "").lower())
+        name = str(tag or "").lower()
+        style = _NOTE_STYLE_TAGS.get(name)
         if style:
             self.active.discard(style)
+            return
+        if name == "span" and self.size_stack:
+            self.size_stack.pop()
 
     def handle_data(self, data: str) -> None:
         text = unescape(data)
@@ -1574,13 +1622,19 @@ class _InlineNoteParser(HTMLParser):
             "bold": "bold" in self.active,
             "italic": "italic" in self.active,
             "underline": "underline" in self.active,
+            "size_delta": self._current_size(),
         }
-        if self.runs and {key: self.runs[-1][key] for key in ("bold", "italic", "underline")} == {
-            key: run[key] for key in ("bold", "italic", "underline")
-        }:
-            self.runs[-1]["text"] += text
-        else:
-            self.runs.append(run)
+        if self.runs:
+            previous = self.runs[-1]
+            if (
+                previous["bold"] == run["bold"]
+                and previous["italic"] == run["italic"]
+                and previous["underline"] == run["underline"]
+                and float(previous.get("size_delta") or 0) == float(run["size_delta"])
+            ):
+                previous["text"] += text
+                return
+        self.runs.append(run)
 
 
 def _prepare_inline_html(value: object) -> str:
@@ -1656,7 +1710,7 @@ def _parse_print_book_notes(notes: Any) -> tuple[list[str], list[str]]:
     The prefix match is case-insensitive. Spaces typed after the slash are kept
     and printed. ``pb/ Tom`` has one space before the note, and ``pb/  Tom``
     has two. Parentheses print only when they are typed in the note. Bold,
-    italic, and underline tags on the note text are kept.
+    italic, underline, and per-line font-size deltas on the note text are kept.
     """
     name_line_values: list[str] = []
     after_address_values: list[str] = []
@@ -1689,7 +1743,7 @@ def print_book_note_runs(value: object, *, default_gap: str = "") -> list[dict[s
     if not "".join(str(run.get("text") or "") for run in body).strip():
         return []
     gap = plain[:gap_len] or default_gap
-    styled = [{"text": gap, "bold": False, "italic": False, "underline": False}] if gap else []
+    styled = [{"text": gap, "bold": False, "italic": False, "underline": False, "size_delta": 0.0}] if gap else []
     styled.extend(body)
     return styled
 
@@ -1711,12 +1765,18 @@ def _style_runs_html(runs: list[dict[str, Any]], *, preserve_spaces: bool = Fals
             text = f"<em>{text}</em>"
         if run.get("bold"):
             text = f"<strong>{text}</strong>"
+        size_label = _format_note_size_delta(run.get("size_delta"))
+        if size_label:
+            text = (
+                f'<span data-note-size-delta="{size_label}" '
+                f'style="font-size: calc(1em + {size_label}pt)">{text}</span>'
+            )
         parts.append(text)
     return "".join(parts)
 
 
 def contact_notes_html(value: object) -> Markup:
-    """Render Notes for the page, keeping bold, italic, underline, and line breaks."""
+    """Render Notes for the page, keeping bold, italic, underline, size, and line breaks."""
     lines = _note_source_lines(value)
     rendered: list[str] = []
     for index, line in enumerate(lines):
@@ -2232,6 +2292,7 @@ def _field_list_meeting_preview_payload() -> dict[str, Any]:
                         "row_order": int(row.get("row_order") or 0),
                         "font_size_pt": font_size_value,
                         "effective_font_size_pt": font_size_value,
+                        "line_height": float(print_preview.get("line_height") or 1.2),
                         "column_gap_px": section_column_gap_px,
                         "preview_printable_width_px": section_preview_printable_width_px,
                         "grid_column_count": section_grid_column_count,
@@ -2968,6 +3029,12 @@ def _meeting_preview_row_style(row: dict[str, Any]) -> str:
         font_size = _parse_font_size_value(row.get("effective_font_size_pt"))
     if font_size is not None:
         declarations.append(f"--meeting-row-font-size: {font_size:.2f}pt")
+    try:
+        line_height = float(row.get("line_height") or 0)
+    except (TypeError, ValueError):
+        line_height = 0.0
+    if line_height > 0:
+        declarations.append(f"line-height: {max(0.8, min(3.0, line_height)):.2f}")
     column_gap = _coerce_int(row.get("column_gap_px"), 6, 0, 48)
     declarations.append(f"--meeting-grid-column-gap: {column_gap}px")
     return "; ".join(declarations)
@@ -3032,7 +3099,7 @@ def _field_list_print_relationship_suffix_html_from_text(suffix: str) -> str:
 def _field_list_print_contact_name_head_html(value: str) -> str:
     comma_index = value.find(",")
     if comma_index < 0:
-        return _print_escape(value)
+        return f'<span class="print-field-list-contact-last-name">{_print_escape(value)}</span>'
     last_name = value[:comma_index]
     rest = value[comma_index:]
     return f'<span class="print-field-list-contact-last-name">{_print_escape(last_name)}</span>{_print_escape(rest)}'
@@ -4268,8 +4335,9 @@ main {{
 }}
 .print-field-list-contact-row {{
   display: grid;
-  grid-template-columns: 16ch minmax(0, 1fr);
-  gap: 0;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 0.33em;
+  row-gap: 0;
   break-inside: avoid;
   page-break-inside: avoid;
   min-width: 0;
@@ -4280,8 +4348,8 @@ main {{
   justify-content: flex-start;
   column-gap: 0.33em;
   white-space: nowrap;
-  width: 16ch;
-  max-width: 16ch;
+  width: max-content;
+  max-width: none;
   overflow: hidden;
 }}
 .print-field-list-phone-value {{
@@ -4325,14 +4393,14 @@ main {{
 }}
 .print-field-list-phone-stack {{
   font-weight: inherit;
-  min-width: 16ch;
-  width: 16ch;
+  min-width: 0;
+  width: max-content;
   overflow: visible;
 }}
 .print-field-list-contact-row.is-compact-address .print-field-list-phone-stack {{
-  min-width: 16ch;
-  width: 16ch;
-  max-width: 16ch;
+  min-width: 0;
+  width: max-content;
+  max-width: none;
   overflow: visible;
 }}
 .print-field-list-contact-name {{

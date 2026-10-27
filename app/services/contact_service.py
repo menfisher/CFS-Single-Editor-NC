@@ -1447,8 +1447,6 @@ def _phone_row_parts(row: tuple[str, ...]) -> tuple[str, str, str]:
     phone_type = row[0] if len(row) > 0 else ""
     phone_value = row[1] if len(row) > 1 else ""
     phone_code = row[2] if len(row) > 2 else ""
-    if re.sub(r"[^a-z0-9]+", " ", phone_type.lower()).strip() in {"", "blank", "no label"}:
-        phone_value = phone_value[:12]
     return phone_type, phone_value, phone_code
 
 

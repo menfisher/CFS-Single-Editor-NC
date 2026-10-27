@@ -27,6 +27,41 @@ function escapeAddressBookPdfHtml(value) {
   }[char]));
 }
 
+function printBookNotePlainText(value) {
+  const source = String(value ?? "");
+  if (!/[<>]/.test(source)) return source;
+  const template = document.createElement("template");
+  template.innerHTML = source;
+  return template.content.textContent ?? "";
+}
+
+function sanitizeAddressBookPdfNoteHtml(value) {
+  const source = String(value ?? "");
+  if (!/[<>]/.test(source)) return escapeAddressBookPdfHtml(source);
+  const template = document.createElement("template");
+  template.innerHTML = source;
+  const render = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) return escapeAddressBookPdfHtml(node.textContent || "");
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    const tag = node.tagName.toUpperCase();
+    const children = Array.from(node.childNodes).map(render).join("");
+    if (tag === "STRONG" || tag === "B") return `<strong>${children}</strong>`;
+    if (tag === "EM" || tag === "I") return `<em>${children}</em>`;
+    if (tag === "U") return `<u>${children}</u>`;
+    if (tag === "SPAN") {
+      const raw = node.getAttribute("data-note-size-delta");
+      if (raw === null || raw === "") return children;
+      const delta = Math.round(Number(raw) * 2) / 2;
+      if (!Number.isFinite(delta) || delta === 0) return children;
+      const clamped = Math.max(-6, Math.min(8, delta));
+      const label = String(clamped);
+      return `<span data-note-size-delta="${escapeAddressBookPdfHtml(label)}" style="font-size: calc(1em + ${escapeAddressBookPdfHtml(label)}pt)">${children}</span>`;
+    }
+    return children;
+  };
+  return Array.from(template.content.childNodes).map(render).join("");
+}
+
 function normalizeAddressBookPdfKey(value) {
   return String(value || "")
     .toLowerCase()
@@ -106,7 +141,7 @@ function contactNameHtmlForAddressBookPdf(value, contact = null) {
   const text = String(value || contact?.name || "CONTACT, Name").trim() || "CONTACT, Name";
   const renderHead = (head) => {
     const commaIndex = head.indexOf(",");
-    if (commaIndex < 0) return escapeAddressBookPdfHtml(head);
+    if (commaIndex < 0) return `<strong>${escapeAddressBookPdfHtml(head)}</strong>`;
     const lastName = head.slice(0, commaIndex);
     const rest = head.slice(commaIndex);
     return `<strong>${escapeAddressBookPdfHtml(lastName)}</strong>${escapeAddressBookPdfHtml(rest)}`;
@@ -805,14 +840,22 @@ function getAddressBookPdfOrderedFields(fields = getAddressBookPdfPickerFields()
     .sort((left, right) => left.order - right.order || left.name.localeCompare(right.name));
 }
 
-function phoneNumberHtmlForAddressBookPdf(value) {
+function isHomePhoneTypeForSms(type) {
+  const normalized = String(type || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return normalized === "home" || normalized === "house" || normalized === "home phone";
+}
+
+function phoneNumberHtmlForAddressBookPdf(value, type = "") {
   const text = String(value || "").trim();
   const digits = text.replace(/\D/g, "");
   if (digits.length !== 10) return escapeAddressBookPdfHtml(text);
   const callPart = `${digits.slice(0, 3)}-${digits.slice(3, 6)}`;
   const messagePart = digits.slice(6);
+  const messageHtml = isHomePhoneTypeForSms(type)
+    ? escapeAddressBookPdfHtml(messagePart)
+    : `<a class="address-book-pdf-phone-message-link" href="sms:${digits}">${escapeAddressBookPdfHtml(messagePart)}</a>`;
   return `
-    <a class="address-book-pdf-phone-call-link" href="tel:${digits}">${escapeAddressBookPdfHtml(callPart)}</a><span class="address-book-pdf-phone-separator">-</span><a class="address-book-pdf-phone-message-link" href="sms:${digits}">${escapeAddressBookPdfHtml(messagePart)}</a>
+    <a class="address-book-pdf-phone-call-link" href="tel:${digits}">${escapeAddressBookPdfHtml(callPart)}</a><span class="address-book-pdf-phone-separator">-</span>${messageHtml}
   `;
 }
 
@@ -1156,7 +1199,7 @@ function renderAddressBookPdfPhoneLineHtml(phone, index) {
   const phoneCode = useFullPhoneLabel ? phone.custom_label : (phone.code || "");
   return `
     <div class="address-book-pdf-phone-line ${index === 0 ? "is-primary-phone" : "is-secondary-phone"}">
-      <span class="address-book-pdf-phone-value">${phoneNumberHtmlForAddressBookPdf(phone.value || "")}</span>
+      <span class="address-book-pdf-phone-value">${phoneNumberHtmlForAddressBookPdf(phone.value || "", phone.type || "")}</span>
       <span class="address-book-pdf-phone-code ${useFullPhoneLabel ? "is-full-phone-label" : ""}">${escapeAddressBookPdfHtml(phoneCode)}</span>
     </div>
   `;
@@ -1203,18 +1246,23 @@ function renderAddressBookPdfContactPreviewRows(contact) {
   const nameLines = wrapAddressBookPdfContactNameLines(contact, maxNameWidthPx, fontSizePx, fontFamily);
   const pbValues = (contact.print_book_name || []).map((item) => String(item || "").trim()).filter(Boolean);
   const paValues = (contact.print_after_address || []).map((item) => String(item || "").trim()).filter(Boolean);
-  const pbText = pbValues.map((value) => `(${value})`).join(" ");
+  const pbText = pbValues.map((value) => `(${printBookNotePlainText(value)})`).join(" ");
+  const pbHtml = pbValues.map((value) => `(${sanitizeAddressBookPdfNoteHtml(value)})`).join(" ");
   let pbInline = false;
   let pbOwnLine = "";
+  let pbOwnLineHtml = "";
   if (pbText) {
     const firstLine = nameLines[0] || "";
     const fitsOnNameLine = nameLines.length > 0
       && measureAddressBookPdfTextWidth(`${firstLine} ${pbText}`, fontSizePx, fontFamily) <= maxNameWidthPx;
     if (fitsOnNameLine) pbInline = true;
-    else pbOwnLine = pbText;
+    else {
+      pbOwnLine = pbText;
+      pbOwnLineHtml = pbHtml;
+    }
   }
   const pbInlineHtml = pbInline
-    ? `<span class="address-book-pdf-print-book">&nbsp;${escapeAddressBookPdfHtml(pbText)}</span>`
+    ? `<span class="address-book-pdf-print-book">&nbsp;${pbHtml}</span>`
     : "";
   const singleNameLine = nameLines.length === 1;
   const rows = nameLines.map((line, index) => ({
@@ -1225,9 +1273,9 @@ function renderAddressBookPdfContactPreviewRows(contact) {
       : `<div class="address-book-pdf-contact-name is-continuation" style="padding-left: ${index}ch;">${contactNameSuffixHtmlForAddressBookPdf(line, contact)}</div>`,
   }));
   const belowLines = [];
-  if (pbOwnLine) belowLines.push({ kind: "pb", text: pbOwnLine });
+  if (pbOwnLine) belowLines.push({ kind: "pb", text: pbOwnLine, html: pbOwnLineHtml });
   addressLines.forEach((address) => belowLines.push({ kind: "addr", address }));
-  paValues.forEach((value) => belowLines.push({ kind: "pa", text: value }));
+  paValues.forEach((value) => belowLines.push({ kind: "pa", text: printBookNotePlainText(value), html: sanitizeAddressBookPdfNoteHtml(value) }));
   const phonesUsed = Math.min(phones.length, nameLines.length);
   const continuationCount = Math.max(phones.length - phonesUsed, belowLines.length);
   for (let index = 0; index < continuationCount; index += 1) {
@@ -1235,7 +1283,7 @@ function renderAddressBookPdfContactPreviewRows(contact) {
     let mainHtml = "";
     if (below) {
       mainHtml = (below.kind === "pb" || below.kind === "pa")
-        ? `<div class="address-book-pdf-address-line address-book-pdf-print-book">${escapeAddressBookPdfHtml(below.text)}</div>`
+        ? `<div class="address-book-pdf-address-line address-book-pdf-print-book">${below.html || escapeAddressBookPdfHtml(below.text)}</div>`
         : renderAddressBookPdfAddressLineHtml(below.address);
     }
     rows.push({

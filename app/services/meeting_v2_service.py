@@ -152,6 +152,8 @@ def _decorate_row_item(row_item: dict) -> dict:
     row_item["is_underlined_row"] = "underlined" in row_item["row_kind_tags"]
     row_item["is_table_start_row"] = "table_start" in row_item["row_kind_tags"]
     row_item["is_table_end_row"] = "table_end" in row_item["row_kind_tags"]
+    row_item["group_with_table_below"] = bool(int(row_item.get("group_with_table_below") or 0)) and row_item["is_table_start_row"]
+    row_item["no_meeting_association"] = bool(int(row_item.get("no_meeting_association") or 0)) and row_item["is_table_start_row"]
     row_item["print_new_page"] = bool(int(row_item.get("print_new_page") or 0)) and row_item["is_table_start_row"]
     return row_item
 
@@ -620,6 +622,16 @@ def _coerce_meeting_grid_float(raw_value, fallback: float, minimum: float) -> fl
     except (TypeError, ValueError):
         value = fallback
     return max(minimum, value)
+
+
+def _coerce_meeting_line_height(raw_value, fallback: float = 1.2) -> float:
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        value = fallback
+    if value <= 0:
+        value = fallback
+    return max(0.8, min(3.0, round(value, 2)))
 
 
 def _layout_values_from_grid(
@@ -1397,6 +1409,14 @@ def _ensure_meeting_v2_sections_once() -> None:
                 """
                 ALTER TABLE meeting_section_layout_v2
                 ADD COLUMN screen_preview_scale REAL NOT NULL DEFAULT 220.0
+                """
+            )
+            conn.commit()
+        if layout_columns and "line_height" not in layout_columns:
+            conn.execute(
+                """
+                ALTER TABLE meeting_section_layout_v2
+                ADD COLUMN line_height REAL NOT NULL DEFAULT 0
                 """
             )
             conn.commit()
@@ -2238,6 +2258,8 @@ def get_meeting_v2_section_detail(
           COALESCE(NULLIF(sl.screen_preview_scale, 0), bp.screen_preview_scale) AS screen_preview_scale,
           sl.font_family AS section_font_family,
           sl.base_font_size_pt AS section_base_font_size_pt,
+          sl.line_height AS section_line_height,
+          COALESCE(NULLIF(sl.line_height, 0), bp.line_height) AS line_height,
           COALESCE(NULLIF(sl.font_family, ''), bp.font_family) AS font_family,
           sl.snap_to_grid,
           sl.show_column_guides,
@@ -2251,7 +2273,7 @@ def get_meeting_v2_section_detail(
           bp.margin_bottom_in,
           bp.font_family AS preset_font_family,
           bp.base_font_size_pt,
-          bp.line_height,
+          bp.line_height AS preset_line_height,
           bp.meeting_table_column_count,
           bp.meeting_table_column_gap_px,
           bp.screen_preview_scale AS preset_screen_preview_scale,
@@ -2359,6 +2381,7 @@ def save_meeting_v2_section(
     meeting_table_column_count=None,
     meeting_table_column_gap_px=None,
     screen_preview_scale=None,
+    line_height=None,
 ) -> None:
     ensure_meeting_v2_sections()
     flow_item_updates = flow_item_updates or []
@@ -2366,6 +2389,20 @@ def save_meeting_v2_section(
     saved_flow_column_updates: list[dict] = []
     normalized_editor_initials = re.sub(r"[^A-Za-z]", "", str(editor_initials or ""))[:2]
     normalized_base_font_size_pt = _parse_font_size_code(base_font_size_pt) or _field_list_bible_study_base_font_size_pt()
+    section_identity = fetch_one(
+        """
+        SELECT field_name, meeting_name
+        FROM meeting_sections_v2
+        WHERE id = ?
+        """,
+        (section_id,),
+    )
+    from app.services.field_end_list_service import is_field_end_list
+
+    field_list_editor = bool(
+        section_identity
+        and is_field_end_list(section_identity.get("field_name"), section_identity.get("meeting_name"))
+    )
     normalized_rows = []
     sortable_rows = []
     for index, row in enumerate(row_updates):
@@ -2377,6 +2414,7 @@ def save_meeting_v2_section(
                     "id": int(row["id"]),
                     "row_kind": _normalize_row_kind_value(row.get("row_kind") or "content"),
                     "group_with_table_below": int(row.get("group_with_table_below") or 0),
+                    "no_meeting_association": 0 if field_list_editor else int(row.get("no_meeting_association") or 0),
                     "print_new_page": int(row.get("print_new_page") or 0),
                     "format_code": str(row.get("format_code") or ""),
                     "label_text": str(row.get("label_text") or ""),
@@ -2391,6 +2429,7 @@ def save_meeting_v2_section(
                 "row_order": next_order,
                 "row_kind": _normalize_row_kind_value(row["row_kind"]),
                 "group_with_table_below": int(row.get("group_with_table_below") or 0),
+                "no_meeting_association": int(row.get("no_meeting_association") or 0),
                 "print_new_page": int(row.get("print_new_page") or 0),
                 "format_code": row["format_code"],
                 "label_text": row["label_text"],
@@ -2435,7 +2474,7 @@ def save_meeting_v2_section(
 
         current_layout = conn.execute(
             """
-            SELECT usable_width_in, column_count, column_gap_px, screen_preview_scale
+            SELECT usable_width_in, column_count, column_gap_px, screen_preview_scale, line_height
             FROM meeting_section_layout_v2
             WHERE section_id = ?
             """,
@@ -2449,6 +2488,14 @@ def save_meeting_v2_section(
             column_gap_px=meeting_table_column_gap_px if meeting_table_column_gap_px is not None else current_layout_dict.get("column_gap_px"),
             screen_preview_scale=screen_preview_scale if screen_preview_scale is not None else current_layout_dict.get("screen_preview_scale"),
         )
+        current_line_height = current_layout_dict.get("line_height")
+        if line_height is not None:
+            normalized_line_height = _coerce_meeting_line_height(
+                line_height,
+                float(current_line_height or 0) or float((preset or {}).get("line_height") or 1.2),
+            )
+        else:
+            normalized_line_height = float(current_line_height or 0)
         if preset:
             conn.execute(
                 """
@@ -2460,7 +2507,8 @@ def save_meeting_v2_section(
                   column_width_px_preview = ?,
                   column_gap_px = ?,
                   screen_preview_scale = ?,
-                  base_font_size_pt = ?
+                  base_font_size_pt = ?,
+                  line_height = ?
                 WHERE section_id = ?
                 """,
                 (
@@ -2471,6 +2519,7 @@ def save_meeting_v2_section(
                     layout_values["column_gap_px"],
                     layout_values["screen_preview_scale"],
                     normalized_base_font_size_pt,
+                    normalized_line_height,
                     section_id,
                 ),
             )
@@ -2484,7 +2533,8 @@ def save_meeting_v2_section(
                   column_width_px_preview = ?,
                   column_gap_px = ?,
                   screen_preview_scale = ?,
-                  base_font_size_pt = ?
+                  base_font_size_pt = ?,
+                  line_height = ?
                 WHERE section_id = ?
                 """,
                 (
@@ -2494,6 +2544,7 @@ def save_meeting_v2_section(
                     layout_values["column_gap_px"],
                     layout_values["screen_preview_scale"],
                     normalized_base_font_size_pt,
+                    normalized_line_height,
                     section_id,
                 ),
             )
@@ -2514,13 +2565,14 @@ def save_meeting_v2_section(
             conn.execute(
                 """
                 UPDATE meeting_section_rows_v2
-                SET row_order = ?, row_kind = ?, group_with_table_below = ?, print_new_page = ?, format_code = ?, label_text = ?, notes = ?
+                SET row_order = ?, row_kind = ?, group_with_table_below = ?, no_meeting_association = ?, print_new_page = ?, format_code = ?, label_text = ?, notes = ?
                 WHERE id = ? AND section_id = ?
                 """,
                 (
                     int(row["row_order"]),
                     _normalize_row_kind_value(row["row_kind"]),
                     1 if _row_has_tag(row["row_kind"], "table_start") and int(row.get("group_with_table_below") or 0) else 0,
+                    1 if _row_has_tag(row["row_kind"], "table_start") and int(row.get("no_meeting_association") or 0) else 0,
                     1 if _row_has_tag(row["row_kind"], "table_start") and int(row.get("print_new_page") or 0) else 0,
                     row.get("format_code") or "",
                     row.get("label_text") or "",
@@ -3247,8 +3299,13 @@ def delete_meeting_v2_section(section_id: int) -> None:
         conn.commit()
 
 
-def add_meeting_v2_cell(section_id: int, row_id: int) -> int | None:
+def add_meeting_v2_cell(section_id: int, row_id: int, count: int = 1) -> int | None:
     ensure_meeting_v2_sections()
+    try:
+        cell_count = int(count or 1)
+    except (TypeError, ValueError):
+        cell_count = 1
+    cell_count = max(1, min(cell_count, 3))
     with get_connection() as conn:
         row_record = conn.execute(
             """
@@ -3261,57 +3318,60 @@ def add_meeting_v2_cell(section_id: int, row_id: int) -> int | None:
         if not row_record:
             return None
 
-        cell_rows = conn.execute(
-            """
-            SELECT col_start, col_span, stack_under_cell_id
-            FROM meeting_row_cells_v2
-            WHERE row_id = ?
-            ORDER BY """
-            + _flow_cell_order_clause()
-            + """
-            """,
-            (row_id,),
-        ).fetchall()
-        default_span = 2
-        next_start = 1
-        occupied_ranges = []
-        for cell_row in cell_rows:
-            if int(cell_row["stack_under_cell_id"] or 0):
-                continue
-            start = int(cell_row["col_start"])
-            end = start + int(cell_row["col_span"]) - 1
-            occupied_ranges.append((start, end))
+        last_id = None
+        for _ in range(cell_count):
+            cell_rows = conn.execute(
+                """
+                SELECT col_start, col_span, stack_under_cell_id
+                FROM meeting_row_cells_v2
+                WHERE row_id = ?
+                ORDER BY """
+                + _flow_cell_order_clause()
+                + """
+                """,
+                (row_id,),
+            ).fetchall()
+            default_span = 2
+            next_start = 1
+            occupied_ranges = []
+            for cell_row in cell_rows:
+                if int(cell_row["stack_under_cell_id"] or 0):
+                    continue
+                start = int(cell_row["col_start"])
+                end = start + int(cell_row["col_span"]) - 1
+                occupied_ranges.append((start, end))
 
-        candidate = 1
-        for start, end in occupied_ranges:
-            if candidate + default_span - 1 < start:
-                break
-            candidate = max(candidate, end + 1)
+            candidate = 1
+            for start, end in occupied_ranges:
+                if candidate + default_span - 1 < start:
+                    break
+                candidate = max(candidate, end + 1)
 
-        if candidate + default_span - 1 <= 28:
-            next_start = candidate
-        elif occupied_ranges:
-            next_start = min(28, occupied_ranges[-1][1] + 1)
+            if candidate + default_span - 1 <= 28:
+                next_start = candidate
+            elif occupied_ranges:
+                next_start = min(28, occupied_ranges[-1][1] + 1)
 
-        cursor = conn.execute(
-            """
-            INSERT INTO meeting_row_cells_v2 (
-              row_id,
-              col_start,
-              col_span,
-              text_value,
-              text_align,
-              font_scale,
-              is_bold,
-              is_italic,
-              is_underlined,
-              is_title
-            ) VALUES (?, ?, ?, '', 'left', 1.0, 0, 0, 0, 0)
-            """,
-            (row_id, next_start, default_span),
-        )
+            cursor = conn.execute(
+                """
+                INSERT INTO meeting_row_cells_v2 (
+                  row_id,
+                  col_start,
+                  col_span,
+                  text_value,
+                  text_align,
+                  font_scale,
+                  is_bold,
+                  is_italic,
+                  is_underlined,
+                  is_title
+                ) VALUES (?, ?, ?, '', 'left', 1.0, 0, 0, 0, 0)
+                """,
+                (row_id, next_start, default_span),
+            )
+            last_id = int(cursor.lastrowid)
         conn.commit()
-        return int(cursor.lastrowid)
+        return last_id
 
 
 def add_meeting_v2_stacked_cell(section_id: int, row_id: int, under_cell_id: int) -> int | None:
@@ -3713,9 +3773,12 @@ def get_meeting_v2_section_editor(section_id: int) -> dict | None:
         "trim_width_in": float(layout.get("trim_width_in") or 3.5),
         "font_family": str(layout.get("font_family") or "Arial"),
         "base_font_size_pt": base_font_size_pt,
-        "line_height": float(layout.get("line_height") or 1.2),
+        "line_height": _coerce_meeting_line_height(layout.get("line_height"), 1.2),
         "screen_preview_scale": float(layout.get("screen_preview_scale") or 220.0),
     }
+    from app.services.field_end_list_service import is_field_end_list
+
+    section["is_field_end_list"] = is_field_end_list(section.get("field_name"), section.get("meeting_name"))
     return section
 
 
@@ -3762,7 +3825,7 @@ def get_meeting_v2_section_print_preview(section_id: int, *, ensure: bool = True
         "preview_printable_width_px": preview_printable_width_px,
         "base_font_size_pt": base_font_size_pt,
         "font_family": str(layout.get("font_family") or "Arial"),
-        "line_height": float(layout.get("line_height") or 1.2),
+        "line_height": _coerce_meeting_line_height(layout.get("line_height"), 1.2),
         "preset_name": str(layout.get("preset_name") or ""),
     }
     section["print_blocks"] = _build_meeting_print_blocks(section.get("rows") or [])

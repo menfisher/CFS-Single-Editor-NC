@@ -1464,7 +1464,8 @@
             const label = String(phone?.type || "").trim();
             const number = String(phone?.value || "").trim();
             const digits = normalizePhoneDigits(number);
-            if (["home", "nh", "work"].includes(label.toLowerCase())) return;
+            const labelKey = label.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+            if (["home", "house", "home phone", "nh", "work"].includes(labelKey)) return;
             if (digits.length < 7) return;
             contactEligibleCount += 1;
             eligible.push({

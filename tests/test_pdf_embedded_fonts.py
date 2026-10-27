@@ -15,6 +15,7 @@ from app.services.address_book_pdf_service import (
     _contact_text_columns,
     _phone_display_text,
     _phone_letter_x,
+    _phone_name_x,
     _text_width,
     build_address_book_pdf,
 )
@@ -84,24 +85,30 @@ class PdfEmbeddedFontTests(unittest.TestCase):
         self.assertAlmostEqual((main_text_x - phone_x) / ch, 16.0, places=5)
 
         phone = _phone_display_text("704-965-6271")
-        letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "M")
+        letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "Sh")
         self.assertAlmostEqual(letter_x, phone_x + tw(phone, 7) + space, places=5)
         self.assertLess(letter_x - (phone_x + tw(phone, 7)), space * 1.15)
         self.assertLess(letter_x, phone_x + (ch * 13) - space)
 
-        two_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "wk")
-        self.assertLessEqual(two_letter_x + tw("wk", 7) + space, main_text_x + 0.01)
+        name_x = _phone_name_x(letter_x, "Sh", 7, tw, main_text_x)
+        self.assertAlmostEqual(name_x, letter_x + tw("Sh", 7) + space, places=5)
+        self.assertLess(name_x, main_text_x)
 
-        other_phone_x, _other_legacy, other_main_x, _other_cont, _other_max = _contact_text_columns(
-            0.14 * 72, 3.5 * 72, 0.14 * 72, 7, tw
-        )
-        self.assertAlmostEqual(main_text_x, other_main_x, places=5)
-        self.assertAlmostEqual(phone_x, other_phone_x, places=5)
+        two_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "wk")
+        two_name_x = _phone_name_x(two_letter_x, "wk", 7, tw, main_text_x)
+        self.assertLessEqual(two_letter_x + tw("wk", 7) + space, main_text_x + 0.01)
+        self.assertAlmostEqual(two_name_x, two_letter_x + tw("wk", 7) + space, places=5)
+
+        other_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "Sh")
+        other_name_x = _phone_name_x(other_letter_x, "Sh", 7, tw, main_text_x)
+        self.assertAlmostEqual(name_x, other_name_x, places=5)
 
         long_number = "1-800-555-12345"
         clamped = _phone_letter_x(long_number, phone_x, main_text_x, 7, tw, "wk")
+        clamped_name = _phone_name_x(clamped, "wk", 7, tw, main_text_x)
         self.assertLessEqual(clamped + tw("wk", 7) + space, main_text_x + 0.01)
         self.assertLess(clamped, phone_x + tw(long_number, 7) + space)
+        self.assertLessEqual(clamped_name, main_text_x + 0.01)
 
     def test_pdf_phone_letter_gap_is_one_space_and_names_align(self) -> None:
         family = "Verdana" if resolve_pdf_font_path("Verdana", "regular") else "Arial"
@@ -125,15 +132,15 @@ class PdfEmbeddedFontTests(unittest.TestCase):
                             "name": "Meeting 1",
                             "contacts": [
                                 {
-                                    "name": "ADAMS, Ann",
-                                    "phones": [{"value": "7049656271", "code": "M"}],
+                                    "name": "THAIN, Sal",
+                                    "phones": [{"value": "7049656271", "code": "Sh"}],
                                     "addresses": [],
                                     "children": [],
                                     "other_relationships": [],
                                 },
                                 {
-                                    "name": "BAKER, Ben",
-                                    "phones": [{"value": "3363820709", "code": "S"}],
+                                    "name": "NELSON, Ned",
+                                    "phones": [{"value": "3363820709", "code": "Sh"}],
                                     "addresses": [],
                                     "children": [],
                                     "other_relationships": [],
@@ -169,7 +176,7 @@ class PdfEmbeddedFontTests(unittest.TestCase):
     def _assert_phone_gap_pdf(self, pdf: bytes, family: str) -> None:
         document = fitz.open(stream=pdf, filetype="pdf")
         try:
-            page = next(item for item in document if "ADAMS" in item.get_text() and "BAKER" in item.get_text())
+            page = next(item for item in document if "THAIN" in item.get_text() and "NELSON" in item.get_text())
             spans = [
                 span
                 for block in page.get_text("dict").get("blocks", [])
@@ -183,31 +190,35 @@ class PdfEmbeddedFontTests(unittest.TestCase):
         def _span(text: str):
             return next(span for span in spans if span["text"] == text)
 
-        adams = _span("ADAMS")
-        baker = _span("BAKER")
-        self.assertAlmostEqual(adams["bbox"][0], baker["bbox"][0], places=1)
+        thain = _span("THAIN")
+        nelson = _span("NELSON")
+        self.assertAlmostEqual(thain["bbox"][0], nelson["bbox"][0], places=1)
 
         def tw(text: str, size: float) -> float:
             return _text_width(text, size, family)
 
-        _phone_x, _legacy_x, main_text_x, _cont_x, _name_max = _contact_text_columns(
+        phone_x, _legacy_x, main_text_x, _cont_x, _name_max = _contact_text_columns(
             0.14 * 72, 3.5 * 72, 0.14 * 72, 7, tw
         )
-        self.assertAlmostEqual(adams["bbox"][0], main_text_x, places=1)
+        space = tw(" ", 7)
+        self.assertLess(thain["bbox"][0], main_text_x - space * 0.25)
 
         phone_span = next(span for span in spans if "704-965-6271" in span["text"])
-        space = tw(" ", 7)
-        old_tab_gap = _legacy_x - (_phone_x + tw("704-965-6271", 7))
-        if phone_span["text"] == "704-965-6271 M":
-            drawn_width = phone_span["bbox"][2] - phone_span["bbox"][0]
-            self.assertAlmostEqual(drawn_width, tw("704-965-6271 M", 7), places=1)
-            self.assertLess(drawn_width + 1.0, (_legacy_x - _phone_x) + tw("M", 7))
-        else:
-            letter_span = next(span for span in spans if span["text"] == "M")
-            gap = letter_span["bbox"][0] - phone_span["bbox"][2]
+        old_tab_gap = _legacy_x - (phone_x + tw("704-965-6271", 7))
+        if "Sh" in phone_span["text"]:
+            code_end = phone_span["bbox"][0] + tw("704-965-6271 Sh", 7)
+            gap = thain["bbox"][0] - code_end
             self.assertGreater(gap, space * 0.4)
             self.assertLess(gap, space * 1.8)
-            self.assertLess(gap, old_tab_gap)
+        else:
+            letter_span = next(span for span in spans if span["text"] == "Sh")
+            number_gap = letter_span["bbox"][0] - phone_span["bbox"][2]
+            self.assertGreater(number_gap, space * 0.4)
+            self.assertLess(number_gap, space * 1.8)
+            self.assertLess(number_gap, old_tab_gap)
+            name_gap = thain["bbox"][0] - letter_span["bbox"][2]
+            self.assertGreater(name_gap, space * 0.4)
+            self.assertLess(name_gap, space * 1.8)
 
     def test_toc_uses_chosen_title_and_entry_font_sizes(self) -> None:
         pages = _build_toc_pages(

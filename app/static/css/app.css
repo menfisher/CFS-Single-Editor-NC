@@ -355,33 +355,40 @@
 
 .address-book-pdf-contact-line {
   display: grid;
-  /* 16ch stack already includes 2-letter code + 1 space; name starts immediately after. */
-  grid-template-columns: 16ch minmax(0, 1fr);
-  column-gap: 0;
+  /* Name starts one space after that row's phone code, like MeetingData. */
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 0.33em;
   align-items: start;
   min-width: 0;
 }
 
-.address-book-pdf-phone-stack {
-  min-width: 16ch;
-  width: 16ch;
-  overflow: visible;
+.address-book-pdf-contact-line:has(.address-book-pdf-phone-spacer) {
+  grid-template-columns: 16ch minmax(0, 1fr);
+  column-gap: 0;
 }
 
-.address-book-pdf-phone-line.address-book-pdf-phone-spacer {
-  visibility: hidden;
+.address-book-pdf-phone-stack {
+  min-width: 0;
+  width: max-content;
+  overflow: visible;
 }
 
 .address-book-pdf-phone-line {
   display: flex;
   align-items: baseline;
   justify-content: flex-start;
-  /* One space after the drawn number; 16ch stack still holds the name column. */
+  /* One space after the drawn number; name follows the code by one space. */
   column-gap: 0.33em;
-  width: 16ch;
-  max-width: 16ch;
+  width: max-content;
+  max-width: none;
   white-space: nowrap;
   overflow: hidden;
+}
+
+.address-book-pdf-phone-line.address-book-pdf-phone-spacer {
+  visibility: hidden;
+  width: 16ch;
+  max-width: 16ch;
 }
 
 .address-book-pdf-phone-value,
@@ -3830,6 +3837,14 @@ button.site-nav-dropdown-item:hover {
   line-height: 1;
 }
 
+.contact-notes-format button[data-notes-line-size] {
+  width: auto;
+  min-width: 26px;
+  padding: 0 5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .contact-notes-editor {
   min-height: 8.5rem;
   width: 100%;
@@ -3846,6 +3861,14 @@ button.site-nav-dropdown-item:hover {
 .contact-notes-editor:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+.contact-edit-form .form-grid .contact-notes-editor [data-note-size-delta],
+.form-grid .contact-notes-editor [data-note-size-delta] {
+  font-family: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  color: inherit;
 }
 
 .contact-notes-info-button {
@@ -5835,10 +5858,17 @@ button.site-nav-dropdown-item:hover {
 }
 
 .editor-header-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(250px, 0.8fr) minmax(430px, 1.05fr) minmax(230px, 0.7fr);
-  align-items: start;
-  gap: 14px;
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  gap: 18px;
+  width: 100%;
+  min-width: 0;
+}
+
+.editor-header-identity {
+  flex: 1 1 22rem;
+  min-width: 18rem;
 }
 
 .editor-header-identity h2 {
@@ -5856,7 +5886,7 @@ button.site-nav-dropdown-item:hover {
 
 .meeting-editor-section-picker {
   display: block;
-  width: min(100%, 32rem);
+  width: 100%;
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 2px 28px 2px 0;
@@ -5878,13 +5908,29 @@ button.site-nav-dropdown-item:hover {
   display: grid;
   gap: 3px;
   align-self: start;
-  width: 100%;
-  min-width: 0;
+  flex: 1 1 22rem;
+  width: auto;
+  min-width: 18rem;
 }
 
 .editor-preset-cluster .editor-inline-heading {
   width: 100%;
   min-width: 0;
+}
+
+.editor-book-layout-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.editor-book-layout-label-row .form-label {
+  margin: 0;
+}
+
+#meeting-layout-info-modal .app-modal-copy + .app-modal-copy {
+  margin-top: 8px;
 }
 
 .editor-preset-cluster select {
@@ -5897,12 +5943,22 @@ button.site-nav-dropdown-item:hover {
   font-size: 0.92rem;
 }
 
+.editor-header-right {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
 .editor-header-summary {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 24px;
-  width: 100%;
+  width: auto;
+  margin-left: 0;
+  flex: 0 0 auto;
 }
 
 .editor-metrics-stack {
@@ -5919,9 +5975,10 @@ button.site-nav-dropdown-item:hover {
 
 .editor-grid-settings-cluster {
   display: grid;
-  grid-template-columns: minmax(112px, 0.74fr) 6.3rem 5.4rem;
+  grid-template-columns: minmax(112px, 0.74fr) 6.3rem 5.4rem 5.2rem;
   align-items: end;
   gap: 8px;
+  flex: 0 0 auto;
   min-width: 0;
 }
 
@@ -5978,6 +6035,10 @@ button.site-nav-dropdown-item:hover {
 
 #meeting_base_font_size_pt {
   width: 5.4rem;
+}
+
+#meeting_line_height {
+  width: 5.2rem;
 }
 
 .editor-actions-links {
@@ -6075,6 +6136,25 @@ button.site-nav-dropdown-item:hover {
   position: relative;
 }
 
+.editor-canvas-heading-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.editor-canvas-heading-row h3 {
+  margin: 0;
+}
+
+#meeting-canvas-info-modal {
+  width: min(560px, calc(100vw - 32px));
+}
+
+#meeting-canvas-info-modal .app-modal-copy + .app-modal-copy {
+  margin-top: 8px;
+}
+
 .delete-all-rows-button,
 #delete-meetingdata-section-modal-save {
   background: #9a3f31;
@@ -6137,12 +6217,19 @@ button.site-nav-dropdown-item:hover {
 
 @media (max-width: 1320px) {
   .editor-header-layout {
-    grid-template-columns: 1fr;
-    gap: 18px;
+    flex-wrap: nowrap;
+    gap: 12px;
   }
 
+  .editor-header-identity,
+  .editor-preset-cluster {
+    min-width: 14rem;
+  }
+
+  .editor-header-right,
   .editor-header-summary {
-    justify-content: space-between;
+    margin-left: auto;
+    justify-content: flex-end;
   }
 }
 
@@ -6175,8 +6262,8 @@ button.site-nav-dropdown-item:hover {
 .row-action-bar {
   display: flex;
   flex-direction: row;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 6px;
 }
 
@@ -6329,7 +6416,7 @@ button.site-nav-dropdown-item:hover {
 
 .wysiwyg-row-toolbar {
   display: grid;
-  grid-template-columns: auto 120px minmax(320px, 1.35fr) 190px auto;
+  grid-template-columns: auto auto minmax(max-content, 1fr) max-content max-content;
   gap: 6px;
   align-items: center;
   padding-top: 8px;
@@ -6360,18 +6447,19 @@ button.site-nav-dropdown-item:hover {
 }
 
 .wysiwyg-row-control-format {
-  width: 190px;
-  min-width: 190px;
+  width: auto;
+  min-width: 0;
   display: grid;
-  grid-template-columns: max-content 5.5rem;
+  grid-template-columns: max-content 3.6rem;
   justify-content: start;
+  gap: 6px;
 }
 
 .wysiwyg-row-font-size-input {
-  width: 5.5rem;
-  min-width: 5.5rem;
-  padding-left: 12px;
-  padding-right: 28px;
+  width: 3.6rem;
+  min-width: 3.6rem;
+  padding-left: 8px;
+  padding-right: 20px;
   text-align: left;
 }
 
@@ -6447,9 +6535,10 @@ button.site-nav-dropdown-item:hover {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: nowrap;
-  gap: 16px;
+  gap: 12px 16px;
   min-width: 0;
   padding: 2px 0 1px;
+  white-space: nowrap;
 }
 
 .wysiwyg-table-start-options.wysiwyg-row-group-toggle-hidden {
@@ -6664,8 +6753,10 @@ button.site-nav-dropdown-item:hover {
 .insert-split {
   position: relative;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: stretch;
   gap: 0;
+  white-space: nowrap;
 }
 
 .insert-split-main {
@@ -6917,11 +7008,11 @@ button.site-nav-dropdown-item:hover {
 }
 
 .editor-grid .wysiwyg-row-font-size-input {
-  width: 5.5rem;
-  min-width: 5.5rem;
-  flex: 0 0 5.5rem;
-  padding-left: 12px;
-  padding-right: 28px;
+  width: 3.6rem;
+  min-width: 3.6rem;
+  flex: 0 0 3.6rem;
+  padding-left: 8px;
+  padding-right: 20px;
 }
 
 .preset-layout {
@@ -7568,10 +7659,10 @@ button.site-nav-dropdown-item:hover {
 
 .field-list-contact-row {
   display: grid;
-  /* 16ch stack already includes 2-letter code + 1 space; name starts immediately after. */
-  grid-template-columns: 16ch minmax(0, 1fr);
+  /* Name starts one space after the phone code, like MeetingData. */
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: start;
-  column-gap: 0;
+  column-gap: 0.33em;
   width: var(--field-list-column-width-in, 3.55in);
   min-width: var(--field-list-column-width-in, 3.55in);
 }
@@ -7586,16 +7677,16 @@ button.site-nav-dropdown-item:hover {
 }
 
 .field-list-phone-stack {
-  min-width: 16ch;
-  width: 16ch;
+  min-width: 0;
+  width: max-content;
   font-weight: 500;
   overflow: visible;
 }
 
 .field-list-contact-row.is-compact-address .field-list-phone-stack {
-  min-width: 16ch;
-  width: 16ch;
-  max-width: 16ch;
+  min-width: 0;
+  width: max-content;
+  max-width: none;
   overflow: visible;
 }
 
@@ -7603,10 +7694,10 @@ button.site-nav-dropdown-item:hover {
   display: flex;
   align-items: baseline;
   justify-content: flex-start;
-  /* One space after the drawn number; 16ch stack still holds the name column. */
+  /* One space after the drawn number; name follows the code by one space. */
   column-gap: 0.33em;
-  width: 16ch;
-  max-width: 16ch;
+  width: max-content;
+  max-width: none;
   overflow: hidden;
 }
 

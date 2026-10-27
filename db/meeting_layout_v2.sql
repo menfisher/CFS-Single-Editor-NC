@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS meeting_section_layout_v2 (
   screen_preview_scale REAL NOT NULL DEFAULT 220.0,
   font_family TEXT NOT NULL DEFAULT '',
   base_font_size_pt REAL NOT NULL DEFAULT 0,
+  line_height REAL NOT NULL DEFAULT 0,
   snap_to_grid INTEGER NOT NULL DEFAULT 1,
   show_column_guides INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (section_id) REFERENCES meeting_sections_v2(id) ON DELETE CASCADE,

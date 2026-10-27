@@ -89,6 +89,7 @@ def _parse_meeting_v2_section_form(form) -> dict:
                 "row_order": int(form.get(f"row_order_{row_id}", 0) or 0),
                 "row_kind": row_kind_values or [str(form.get(f"row_kind_{row_id}", "content") or "content")],
                 "group_with_table_below": int(form.get(f"group_with_table_below_{row_id}", 0) or 0),
+                "no_meeting_association": int(form.get(f"no_meeting_association_{row_id}", 0) or 0),
                 "print_new_page": int(form.get(f"print_new_page_{row_id}", 0) or 0),
                 "format_code": str(form.get(f"format_code_{row_id}", "") or ""),
                 "label_text": str(form.get(f"label_text_{row_id}", "") or ""),
@@ -150,6 +151,7 @@ def _parse_meeting_v2_section_form(form) -> dict:
         "meeting_table_column_count": form.get("meeting_table_column_count"),
         "meeting_table_column_gap_px": form.get("meeting_table_column_gap_px"),
         "screen_preview_scale": form.get("screen_preview_scale"),
+        "line_height": form.get("meeting_line_height"),
         "row_updates": row_updates,
         "cell_updates": cell_updates,
         "flow_item_updates": flow_item_updates,
@@ -167,6 +169,7 @@ def _save_meeting_v2_section_from_form(section_id: int, form) -> None:
         meeting_table_column_count=parsed["meeting_table_column_count"],
         meeting_table_column_gap_px=parsed["meeting_table_column_gap_px"],
         screen_preview_scale=parsed["screen_preview_scale"],
+        line_height=parsed["line_height"],
         editor_initials=get_current_editor_initials(),
         row_updates=parsed["row_updates"],
         cell_updates=parsed["cell_updates"],
@@ -460,6 +463,8 @@ def meeting_v2_section_editor(
             for item in list_field_end_lists(field_name)
             if str(item.get("list_name") or "").strip()
         ]
+        meeting_name = str(section.get("meeting_name") or "").strip()
+        section["is_field_end_list"] = meeting_name in section["field_end_lists"]
         row_colors = get_meeting_v2_row_colors()
         google_sync = get_google_sync_summary()
         _log_meeting_route("editor loaded google sync")
@@ -581,7 +586,11 @@ async def meeting_v2_cell_add(request: Request, section_id: int, row_id: int):
     _save_meeting_v2_section_from_form(section_id, form)
     row_kind = str(form.get(f"row_kind_{row_id}", "content") or "content").strip() or "content"
     update_meeting_v2_row_kind(section_id, row_id, row_kind)
-    add_meeting_v2_cell(section_id, row_id)
+    try:
+        cell_count = int(str(form.get("cell_count") or "1").strip() or "1")
+    except ValueError:
+        cell_count = 1
+    add_meeting_v2_cell(section_id, row_id, count=cell_count)
     target = f"/meetings/v2/sections/{section_id}/editor#row-{row_id}" if return_to == "editor" else f"/meetings/v2/sections/{section_id}"
     _export_shared_after_meeting_edit()
     return RedirectResponse(url=target, status_code=303)

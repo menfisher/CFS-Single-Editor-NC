@@ -822,7 +822,7 @@ def _contact_text_columns(
     font_size: float,
     tw,
 ) -> tuple[float, float, float, float, float]:
-    """16ch phone stack: name starts at 16ch. Letter follows the drawn number plus one space."""
+    """Phone stack reserve: wraps/addresses stay at 16ch+1ch. First names follow the code."""
     ch_width = tw("0", font_size)
     phone_x = margin_left
     main_text_x = phone_x + (ch_width * 16)
@@ -833,12 +833,33 @@ def _contact_text_columns(
     return phone_x, phone_code_x, main_text_x, continuation_x, name_max_width
 
 
+PHONE_COLUMN_CH_COUNT = 12
+
+
 def _phone_display_text(phone_value: object) -> str:
     cleaned = _clean(phone_value)
     digits = _phone_digits(cleaned)
     if len(digits) == 10:
         return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
     return cleaned
+
+
+def _clip_to_phone_column_width(
+    value: object,
+    font_size: float,
+    tw,
+) -> str:
+    """Keep Blank phone-column text that fits 12ch (width of \"0\" × 12)."""
+    text = _clean(value)
+    if not text:
+        return ""
+    max_width = tw("0", font_size) * PHONE_COLUMN_CH_COUNT
+    if tw(text, font_size) <= max_width:
+        return text
+    trimmed = text
+    while trimmed and tw(trimmed, font_size) > max_width:
+        trimmed = trimmed[:-1]
+    return trimmed
 
 
 def _phone_letter_x(
@@ -851,8 +872,8 @@ def _phone_letter_x(
 ) -> float:
     """Place the phone letter after the drawn number plus one space.
 
-    Last names stay at main_text_x. Clamp so a long number or 2-letter code
-    cannot collide with the name column.
+    main_text_x is the rightmost the first name may start. Clamp so a long
+    number or code still leaves room for wrapped names and addresses.
     """
     space = tw(" ", font_size)
     desired = phone_x + tw(phone_text, font_size) + space
@@ -861,6 +882,22 @@ def _phone_letter_x(
     if max_x < phone_x:
         return phone_x
     return min(desired, max_x)
+
+
+def _phone_name_x(
+    letter_x: float,
+    code: str,
+    font_size: float,
+    tw,
+    max_name_x: float | None = None,
+) -> float:
+    """Place the last name one space after the drawn phone code, like MeetingData."""
+    space = tw(" ", font_size)
+    code_width = tw(code, font_size) if code else 0.0
+    desired = letter_x + code_width + (space if code else 0.0)
+    if max_name_x is None:
+        return desired
+    return min(desired, max_name_x)
 
 
 def _text_width(text: str, size: float, font_family: str = "Arial", *, bold: bool = False) -> float:
@@ -943,6 +980,14 @@ def _map_url(provider: str, coordinates: str, address_text: str = "") -> str:
 
 def _phone_digits(value: object) -> str:
     return re.sub(r"\D", "", str(value or ""))
+
+
+def _is_home_phone_type(phone_type: object) -> bool:
+    return re.sub(r"[^a-z0-9]+", " ", _clean(phone_type).lower()).strip() in {
+        "home",
+        "house",
+        "home phone",
+    }
 
 
 def _plain_text(value: object) -> str:
@@ -1142,6 +1187,19 @@ def _meeting_row_font_size_pt(row: dict, default: float) -> float:
         if size > 0:
             return max(4.0, size)
     return max(4.0, default)
+
+
+def _meeting_row_line_height(row: dict, default: float) -> float:
+    try:
+        value = float(row.get("line_height") or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        try:
+            value = float(default or 1.2)
+        except (TypeError, ValueError):
+            value = 1.2
+    return max(0.8, min(3.0, value))
 
 
 def _flow_row_print_line_count(row: dict) -> int:
@@ -2253,7 +2311,7 @@ def build_address_book_pdf(
         total = 0.0
         for row in chunk:
             row_font_size = _meeting_row_font_size_pt(row, font_size)
-            row_line_step = row_font_size * max(0.8, float(layout.get("line_height") or 1.2))
+            row_line_step = row_font_size * _meeting_row_line_height(row, layout.get("line_height"))
             row_line_count = _meeting_row_line_count(row, **meeting_row_count_kwargs)
             total += row_line_count * row_line_step
         return total
@@ -2292,14 +2350,29 @@ def build_address_book_pdf(
             add_text(safe_line, x)
             return
         comma_index = safe_line.find(",")
-        if comma_index <= 0:
+        last_name = ""
+        rest = ""
+        if comma_index > 0:
+            last_name = safe_line[:comma_index]
+            rest = safe_line[comma_index:]
+        elif comma_index < 0:
+            semicolon_index = safe_line.find("; ")
+            if semicolon_index > 0:
+                last_name = safe_line[:semicolon_index]
+                rest = safe_line[semicolon_index:]
+            elif safe_line.endswith(";"):
+                last_name = safe_line[:-1]
+                rest = ";"
+            else:
+                add_text(safe_line, x, bold=True)
+                return
+        if not last_name:
             add_text(safe_line, x)
             return
-        last_name = safe_line[:comma_index]
-        rest = safe_line[comma_index:]
         rest_x = x + _text_width(last_name, font_size, font_family, bold=True)
         page.lines.append(_PdfLine(text=last_name, x=x, y=y, size=font_size, bold=True))
-        page.lines.append(_PdfLine(text=fit_line(rest, rest_x), x=rest_x, y=y, size=font_size))
+        if rest:
+            page.lines.append(_PdfLine(text=fit_line(rest, rest_x), x=rest_x, y=y, size=font_size))
 
     def contact_name_lines(contact: dict[str, Any], name: str, max_width: float) -> list[str]:
         from app.services.field_list_service import _wrap_contact_name_lines
@@ -2383,7 +2456,7 @@ def build_address_book_pdf(
         nonlocal y
         kind = _clean(row.get("kind"))
         row_font_size = _meeting_row_font_size_pt(row, font_size)
-        row_line_step = row_font_size * max(0.8, float(layout.get("line_height") or 1.2))
+        row_line_step = row_font_size * _meeting_row_line_height(row, layout.get("line_height"))
         column_gap_pt = _meeting_column_gap_pt(
             row.get("column_gap_px"),
             grid_width_pt=content_width,
@@ -2566,7 +2639,7 @@ def build_address_book_pdf(
         total = line_step
         for row in rows:
             row_font_size = _meeting_row_font_size_pt(row, font_size)
-            row_line_step = row_font_size * max(0.8, float(layout.get("line_height") or 1.2))
+            row_line_step = row_font_size * _meeting_row_line_height(row, layout.get("line_height"))
             total += _meeting_row_line_count(row, **meeting_row_count_kwargs) * row_line_step
         return total + line_step
 
@@ -2614,6 +2687,7 @@ def build_address_book_pdf(
             if not prints_on_its_own_page(meeting):
                 continue
             heading = _meeting_heading(meeting_name, meeting.get("home_last_name"))
+            is_field_end_list = _is_field_end_list_meeting(meeting)
             is_last_meeting = meeting_index == last_printable_index and field is ordered_fields[-1]
             if pack_complete_meetings and _page_content_lines():
                 needed_height = (
@@ -2637,15 +2711,23 @@ def build_address_book_pdf(
             add_rule()
             def draw_printed_contacts(contacts: list) -> None:
                 nonlocal y
-                from app.services.field_list_service import print_book_note_runs
+                from app.services.field_list_service import print_book_note_runs, print_note_font_size
 
                 def kept_note(item: object) -> str:
                     text = str(item or "").rstrip()
                     return text if text.strip() else ""
 
+                def note_run_size(run: dict) -> float:
+                    return print_note_font_size(font_size, run)
+
                 def note_runs_width(runs: list[dict]) -> float:
                     return sum(
-                        _text_width(str(run.get("text") or ""), font_size, font_family, bold=bool(run.get("bold")))
+                        _text_width(
+                            str(run.get("text") or ""),
+                            note_run_size(run),
+                            font_family,
+                            bold=bool(run.get("bold")),
+                        )
                         for run in runs
                     )
 
@@ -2655,23 +2737,37 @@ def build_address_book_pdf(
                         text = str(run.get("text") or "")
                         if not text:
                             continue
-                        width = _text_width(text, font_size, font_family, bold=bool(run.get("bold")))
+                        size = note_run_size(run)
+                        width = _text_width(text, size, font_family, bold=bool(run.get("bold")))
                         is_bold = bool(run.get("bold"))
-                        add_text(text, cursor, bold=is_bold, italic=bool(run.get("italic")) and not is_bold)
+                        add_text(text, cursor, size=size, bold=is_bold, italic=bool(run.get("italic")) and not is_bold)
                         if run.get("underline"):
-                            rule_y = y - (font_size * 0.18)
+                            rule_y = y - (size * 0.18)
                             page.rules.append(_PdfRule(cursor, rule_y, cursor + width, rule_y, 0.35))
                         cursor += width
 
                 def drawn_name_end(line: str, x: float) -> float:
                     safe_line = fit_line(line, x)
                     comma_index = safe_line.find(",")
-                    if comma_index <= 0:
+                    last_name = ""
+                    rest = ""
+                    if comma_index > 0:
+                        last_name = safe_line[:comma_index]
+                        rest = safe_line[comma_index:]
+                    elif comma_index < 0:
+                        semicolon_index = safe_line.find("; ")
+                        if semicolon_index > 0:
+                            last_name = safe_line[:semicolon_index]
+                            rest = safe_line[semicolon_index:]
+                        elif safe_line.endswith(";"):
+                            last_name = safe_line[:-1]
+                            rest = ";"
+                        else:
+                            return x + _text_width(safe_line, font_size, font_family, bold=True)
+                    if not last_name:
                         return x + tw(safe_line, font_size)
-                    last_name = safe_line[:comma_index]
-                    rest = safe_line[comma_index:]
                     rest_x = x + _text_width(last_name, font_size, font_family, bold=True)
-                    return rest_x + tw(fit_line(rest, rest_x), font_size)
+                    return rest_x + tw(fit_line(rest, rest_x), font_size) if rest else rest_x
 
                 for contact in contacts:
                     phones = list(contact.get("phones") or [])
@@ -2724,9 +2820,28 @@ def build_address_book_pdf(
                         line for line in pa_run_lines if any(str(run.get("text") or "").strip() for run in line)
                     ]
 
+                    def first_name_x() -> float:
+                        if not phones:
+                            return main_text_x
+                        first_phone = phones[0]
+                        first_value = _clean(
+                            first_phone.get("value") if isinstance(first_phone, dict) else first_phone
+                        )
+                        first_code = _clean(first_phone.get("code") if isinstance(first_phone, dict) else "")
+                        letter_x = _phone_letter_x(
+                            _phone_display_text(first_value),
+                            phone_x,
+                            main_text_x,
+                            font_size,
+                            tw,
+                            first_code,
+                        )
+                        return _phone_name_x(letter_x, first_code, font_size, tw, main_text_x)
+
+                    name_line_x = first_name_x()
                     if pb_inline_runs and name_lines:
                         fits_on_name_line = (
-                            drawn_name_end(name_lines[0], main_text_x) + note_runs_width(pb_inline_runs)
+                            drawn_name_end(name_lines[0], name_line_x) + note_runs_width(pb_inline_runs)
                             <= page_width - margin_right
                         )
                         if not fits_on_name_line:
@@ -2748,6 +2863,10 @@ def build_address_book_pdf(
                         phone_value = _clean(phone_item.get("value") if isinstance(phone_item, dict) else phone_item)
                         digits = _phone_digits(phone_value)
                         display_text = _phone_display_text(phone_value)
+                        phone_type = _clean(phone_item.get("type") if isinstance(phone_item, dict) else "")
+                        if phone_type.lower() in {"blank", "no label"}:
+                            display_text = _clip_to_phone_column_width(display_text, font_size, tw)
+                            phone_value = display_text
                         if len(digits) == 10:
                             call_text = f"{digits[:3]}-{digits[3:6]}"
                             text_text = digits[6:]
@@ -2756,7 +2875,8 @@ def build_address_book_pdf(
                             # "File sms:… not found" instead of opening Messages.
                             page.lines.append(_PdfLine(call_text, phone_x, y, font_size, uri=f"tel://{digits}", width=tw(call_text, font_size)))
                             page.lines.append(_PdfLine("-", phone_x + tw(call_text, font_size), y, font_size))
-                            page.lines.append(_PdfLine(text_text, phone_x + tw(f"{call_text}-", font_size), y, font_size, uri=f"sms://{digits}", width=tw(text_text, font_size)))
+                            last_uri = "" if _is_home_phone_type(phone_type) else f"sms://{digits}"
+                            page.lines.append(_PdfLine(text_text, phone_x + tw(f"{call_text}-", font_size), y, font_size, uri=last_uri, width=tw(text_text, font_size)))
                         else:
                             add_text(phone_value, phone_x)
                         custom_label = _clean(phone_item.get("custom_label") if isinstance(phone_item, dict) else "")
@@ -2773,7 +2893,7 @@ def build_address_book_pdf(
                         if index < len(phones):
                             draw_phone(phones[index], use_full_custom_label=(index > 0))
                             phones_drawn += 1
-                        line_x = main_text_x if index == 0 else continuation_x
+                        line_x = name_line_x if index == 0 else continuation_x
                         add_contact_name_line(line, line_x, bold_last_name=(index == 0))
                         if index == 0 and pb_inline_runs:
                             add_note_runs(pb_inline_runs, drawn_name_end(line, line_x))
@@ -2819,7 +2939,7 @@ def build_address_book_pdf(
                 first_chunk_lines = sum(
                     _meeting_row_line_count(row, **meeting_row_count_kwargs) for row in first_chunk
                 )
-                first_chunk_unassociated = any(
+                first_chunk_unassociated = (not is_field_end_list) and any(
                     bool(row.get("is_table_start_row")) and bool(row.get("no_meeting_association"))
                     for row in first_chunk
                 )
@@ -2839,7 +2959,7 @@ def build_address_book_pdf(
                     y -= line_step
                 for chunk in bible_chunks:
                     chunk_lines = sum(_meeting_row_line_count(row, **meeting_row_count_kwargs) for row in chunk)
-                    no_meeting_association = any(
+                    no_meeting_association = (not is_field_end_list) and any(
                         bool(row.get("is_table_start_row")) and bool(row.get("no_meeting_association"))
                         for row in chunk
                     )

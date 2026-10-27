@@ -8,7 +8,7 @@
   {% set row_colors = row_colors|default({"title_bar": "#e3eff3"}) %}
   {% set current_field_value = contact.fields_list[0] if contact.fields_list else (contact.fields_text or "") %}
   {% set current_meeting_value = contact.meetings_list[0] if contact.meetings_list else (contact.meetings_text or "") %}
-  {% set phone_label_options = ["Blank", "Mobile", "Home", "Work", "Nursing Home", "Custom"] %}
+  {% set phone_label_options = ["Mobile", "Home", "Work", "Nursing Home", "Blank", "Custom"] %}
   {% set email_label_options = ["Home", "Work", "School", "Other", "Custom"] %}
   {% set address_label_options = ["Home", "Work", "Mail", "NH", "Custom"] %}
   {% set relationship_label_options = ["Husband", "Wife", "Child", "Father", "Mother", "Brother", "Sister", "Friend", "Relative", "Partner", "Custom"] %}
@@ -241,7 +241,7 @@
                 <div class="contact-edit-row">
                   <label>
                     <span data-phone-value-heading>{{ phone_value_heading(item.phone_type) }}</span>
-                    <input type="text" name="phone_value" value="{% if is_blank_phone_label(item.phone_type) %}{{ (item.phone_value or '')[:12] }}{% else %}{{ item.phone_value or '' }}{% endif %}"{% if is_blank_phone_label(item.phone_type) %} maxlength="12"{% endif %}>
+                    <input type="text" name="phone_value" value="{{ item.phone_value or '' }}">
                   </label>
                   <label>
                     <span>Label</span>
@@ -253,12 +253,12 @@
             {% else %}
               <div class="contact-edit-row">
                 <label>
-                  <span data-phone-value-heading>{{ phone_value_heading() }}</span>
-                  <input type="text" name="phone_value" value="" maxlength="12">
+                  <span data-phone-value-heading>{{ phone_value_heading("Mobile") }}</span>
+                  <input type="text" name="phone_value" value="">
                 </label>
                 <label>
                   <span>Label</span>
-                  {{ label_select("phone_type", phone_label_options) }}
+                  {{ label_select("phone_type", phone_label_options, "Mobile") }}
                 </label>
                 <button type="button" class="contact-edit-remove" data-remove-row>Remove</button>
               </div>
@@ -511,6 +511,8 @@
               <button type="button" data-notes-command="bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
               <button type="button" data-notes-command="italic" title="Italic (Ctrl+I)"><em>I</em></button>
               <button type="button" data-notes-command="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+              <button type="button" data-notes-line-size="-0.5" title="Decrease line size 0.5pt" aria-label="Decrease line size 0.5pt">A−</button>
+              <button type="button" data-notes-line-size="0.5" title="Increase line size 0.5pt" aria-label="Increase line size 0.5pt">A+</button>
             </div>
             <button type="button" class="contact-notes-info-button" id="contact-notes-info-button" aria-label="Notes print codes" title="Notes print codes">
               <span aria-hidden="true">i</span>
@@ -550,6 +552,7 @@
         <p class="app-modal-copy"><strong>pa/</strong> = print after address</p>
         <p class="app-modal-copy">Example: <code>pb/ Tom is son</code> prints Tom is son before the address lines. Include parentheses in the note to print them, such as <code>pb/ (Tom is son)</code> or <code>pa/ (lives nearby)</code>.</p>
         <p class="app-modal-copy">Select words in Notes, then press Ctrl+B for bold, Ctrl+I for italic, or Ctrl+U for underline. On a Mac, use the Command key. The same formatting prints on <strong>pb/</strong> and <strong>pa/</strong> lines. A word that is both bold and italic prints in bold.</p>
+        <p class="app-modal-copy">Put the caret on a line, then click <strong>A−</strong> or <strong>A+</strong> to decrease or increase that line's font size by 0.5pt. Only the current line changes. The same size prints on <strong>pb/</strong> and <strong>pa/</strong> lines in the book.</p>
       </div>
       <div class="app-modal-actions">
         <button type="submit" class="contact-card-button contact-card-button-edit" value="close">OK</button>
@@ -613,12 +616,12 @@
   <template id="contact-edit-template-phones">
     <div class="contact-edit-row">
       <label>
-        <span data-phone-value-heading>{{ phone_value_heading() }}</span>
-        <input type="text" name="phone_value" value="" maxlength="12">
+        <span data-phone-value-heading>{{ phone_value_heading("Mobile") }}</span>
+        <input type="text" name="phone_value" value="">
       </label>
       <label>
         <span>Label</span>
-        {{ label_select("phone_type", phone_label_options) }}
+        {{ label_select("phone_type", phone_label_options, "Mobile") }}
       </label>
       <button type="button" class="contact-edit-remove" data-remove-row>Remove</button>
     </div>
@@ -708,11 +711,33 @@
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;");
+      const NOTE_SIZE_STEP = 0.5;
+      const NOTE_SIZE_MIN_DELTA = -6;
+      const NOTE_SIZE_MAX_DELTA = 8;
+      const clampNoteSizeDelta = (value) => {
+        const stepped = Math.round(Number(value) / NOTE_SIZE_STEP) * NOTE_SIZE_STEP;
+        if (!Number.isFinite(stepped)) return 0;
+        return Math.max(NOTE_SIZE_MIN_DELTA, Math.min(NOTE_SIZE_MAX_DELTA, stepped));
+      };
+      const formatNoteSizeDelta = (value) => String(Math.round(clampNoteSizeDelta(value) * 2) / 2);
+      const noteSizeSpanHtml = (delta, children) => {
+        const safe = formatNoteSizeDelta(delta);
+        if (Number(safe) === 0) return children;
+        return `<span data-note-size-delta="${safe}" style="font-size: calc(1em + ${safe}pt)">${children}</span>`;
+      };
+      const isKeptNotesTag = (tag) => (
+        /^<\/?(?:strong|b|em|i|u)\s*>$/i.test(tag)
+        || /^<br\s*\/?>$/i.test(tag)
+        || /^<\/span\s*>$/i.test(tag)
+        || /^<span\b(?=[^>]*\bdata-note-size-delta\s*=)[^>]*>$/i.test(tag)
+      );
       const normalizeNotesHtml = (html) => {
         const container = document.createElement("div");
         container.innerHTML = html || "";
         const renderNode = (node) => {
-          if (node.nodeType === Node.TEXT_NODE) return escapeNotesText(node.textContent || "");
+          if (node.nodeType === Node.TEXT_NODE) {
+            return escapeNotesText(node.textContent || "").replace(/\n/g, "<br>");
+          }
           if (node.nodeType !== Node.ELEMENT_NODE) return "";
           const tag = node.tagName.toLowerCase();
           const children = Array.from(node.childNodes).map(renderNode).join("");
@@ -720,6 +745,11 @@
           if (tag === "b" || tag === "strong") return `<strong>${children}</strong>`;
           if (tag === "i" || tag === "em") return `<em>${children}</em>`;
           if (tag === "u") return `<u>${children}</u>`;
+          if (tag === "span") {
+            const raw = node.getAttribute("data-note-size-delta");
+            if (raw === null || raw === "") return children;
+            return noteSizeSpanHtml(raw, children);
+          }
           if (tag === "div" || tag === "p") {
             if (!children || children === "<br>") return "<br>";
             return children.endsWith("<br>") ? children : `${children}<br>`;
@@ -744,7 +774,7 @@
       const notesToEditorHtml = (value) => {
         const source = String(value || "");
         const safe = source.replace(/<[^>]*>/g, (tag) => (
-          /^<\/?(?:strong|b|em|i|u)\s*>$/i.test(tag) || /^<br\s*\/?>$/i.test(tag) ? tag : escapeNotesText(tag)
+          isKeptNotesTag(tag) ? tag : escapeNotesText(tag)
         ));
         return normalizeNotesHtml(safe);
       };
@@ -797,12 +827,326 @@
         }
         syncNotes();
       };
+      const isNotesLineBlock = (node) => {
+        if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+        const tag = node.tagName.toLowerCase();
+        return tag === "div" || tag === "p";
+      };
+      const splitNotesNewlinesToBreaks = (editor) => {
+        const selection = window.getSelection();
+        const anchorNode = selection && selection.rangeCount ? selection.anchorNode : null;
+        const anchorOffset = selection && selection.rangeCount ? selection.anchorOffset : 0;
+        let nextNode = null;
+        let nextOffset = 0;
+        const texts = [];
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) texts.push(walker.currentNode);
+        texts.forEach((textNode) => {
+          const value = textNode.textContent || "";
+          if (!value.includes("\n")) return;
+          const parent = textNode.parentNode;
+          const parts = value.split("\n");
+          let origin = 0;
+          parts.forEach((part, index) => {
+            if (index) {
+              parent.insertBefore(document.createElement("br"), textNode);
+              origin += 1;
+            }
+            const start = origin;
+            const end = origin + part.length;
+            const created = document.createTextNode(part);
+            parent.insertBefore(created, textNode);
+            if (anchorNode === textNode && nextNode === null && anchorOffset >= start && anchorOffset <= end) {
+              nextNode = created;
+              nextOffset = anchorOffset - start;
+            }
+            origin = end;
+          });
+          parent.removeChild(textNode);
+        });
+        if (nextNode && selection) {
+          const range = document.createRange();
+          range.setStart(nextNode, Math.max(0, Math.min(nextNode.textContent.length, nextOffset)));
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      };
+      const collectNoteLineSegments = (editor) => {
+        const lines = [[]];
+        const startLine = () => {
+          if (lines[lines.length - 1].length) lines.push([]);
+        };
+        const walk = (node) => {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const text = node.textContent || "";
+            if (text) lines[lines.length - 1].push({ node, start: 0, end: text.length });
+            return;
+          }
+          if (node.nodeType !== Node.ELEMENT_NODE) return;
+          const tag = node.tagName.toLowerCase();
+          if (tag === "br") {
+            lines.push([]);
+            return;
+          }
+          if (isNotesLineBlock(node)) {
+            startLine();
+            Array.from(node.childNodes).forEach(walk);
+            startLine();
+            return;
+          }
+          Array.from(node.childNodes).forEach(walk);
+        };
+        Array.from(editor.childNodes).forEach(walk);
+        while (lines.length > 1 && !lines[lines.length - 1].length) lines.pop();
+        return lines;
+      };
+      const resolveNotesCaretPoint = (editor, selection) => {
+        let node = selection.anchorNode;
+        let offset = selection.anchorOffset;
+        if (node && node.nodeType === Node.ELEMENT_NODE) {
+          if (offset < node.childNodes.length) {
+            let target = node.childNodes[offset];
+            while (target && target.nodeType === Node.ELEMENT_NODE && target.firstChild && target.tagName.toLowerCase() !== "br") {
+              target = target.firstChild;
+            }
+            if (target && target.nodeType === Node.TEXT_NODE) return { node: target, offset: 0 };
+            if (target) return { node: target, offset: 0 };
+          } else if (node.childNodes.length) {
+            let target = node.childNodes[node.childNodes.length - 1];
+            while (target && target.nodeType === Node.ELEMENT_NODE && target.lastChild && target.tagName.toLowerCase() !== "br") {
+              target = target.lastChild;
+            }
+            if (target && target.nodeType === Node.TEXT_NODE) return { node: target, offset: target.textContent.length };
+            if (target) return { node: target, offset: 0 };
+          }
+        }
+        return { node, offset };
+      };
+      const findNoteLineIndex = (lines, caretNode, caretOffset) => {
+        for (let index = 0; index < lines.length; index += 1) {
+          for (const segment of lines[index]) {
+            if (segment.node === caretNode && caretOffset >= segment.start && caretOffset <= segment.end) {
+              return index;
+            }
+          }
+        }
+        if (caretNode && caretNode.nodeType === Node.ELEMENT_NODE) {
+          for (let index = 0; index < lines.length; index += 1) {
+            for (const segment of lines[index]) {
+              if (caretNode.contains?.(segment.node)) return index;
+            }
+          }
+        }
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+          if (lines[index].length) return index;
+        }
+        return 0;
+      };
+      const notesLineRangeFromSelection = (editor) => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || !editor.contains(selection.anchorNode)) return null;
+        splitNotesNewlinesToBreaks(editor);
+        const lines = collectNoteLineSegments(editor);
+        if (!lines.length) return null;
+        const caret = resolveNotesCaretPoint(editor, selection);
+        const line = lines[findNoteLineIndex(lines, caret.node, caret.offset)] || [];
+        if (!line.length) return null;
+        const range = document.createRange();
+        range.setStart(line[0].node, line[0].start);
+        range.setEnd(line[line.length - 1].node, line[line.length - 1].end);
+        return range;
+      };
+      const unwrapNoteSizeSpans = (root) => {
+        const spans = [];
+        if (root.nodeType === Node.ELEMENT_NODE && root.matches?.("span[data-note-size-delta]")) {
+          spans.push(root);
+        }
+        if (root.querySelectorAll) {
+          spans.push(...root.querySelectorAll("span[data-note-size-delta]"));
+        }
+        spans.reverse().forEach((span) => {
+          const parent = span.parentNode;
+          if (!parent) return;
+          while (span.firstChild) parent.insertBefore(span.firstChild, span);
+          parent.removeChild(span);
+        });
+      };
+      const noteSizeDeltaFromNode = (node, editor) => {
+        let current = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        while (current && current !== editor) {
+          if (current.matches?.("span[data-note-size-delta]")) {
+            return clampNoteSizeDelta(current.getAttribute("data-note-size-delta"));
+          }
+          current = current.parentElement;
+        }
+        return 0;
+      };
+      const exclusiveNoteSizeSpan = (lineRange, editor) => {
+        let node = lineRange.commonAncestorContainer;
+        if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+        while (node && node !== editor) {
+          if (node.matches?.("span[data-note-size-delta]")) {
+            const spanRange = document.createRange();
+            spanRange.selectNodeContents(node);
+            if (
+              spanRange.compareBoundaryPoints(Range.START_TO_START, lineRange) === 0
+              && spanRange.compareBoundaryPoints(Range.END_TO_END, lineRange) === 0
+            ) {
+              return node;
+            }
+            return null;
+          }
+          node = node.parentElement;
+        }
+        return null;
+      };
+      const enclosingNoteSizeSpan = (node, editor) => {
+        let current = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        while (current && current !== editor) {
+          if (current.nodeType === Node.ELEMENT_NODE && current.matches("span[data-note-size-delta]")) {
+            return current;
+          }
+          current = current.parentElement;
+        }
+        return null;
+      };
+      const breakOutOfNoteSizeSpan = () => {
+        if (!notesEditor) return false;
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || !notesEditor.contains(selection.anchorNode)) return false;
+        const caret = selection.getRangeAt(0);
+        const span = enclosingNoteSizeSpan(caret.startContainer, notesEditor)
+          || enclosingNoteSizeSpan(caret.endContainer, notesEditor);
+        if (!span) return false;
+        if (!caret.collapsed) caret.deleteContents();
+        const afterRange = document.createRange();
+        afterRange.setStart(caret.startContainer, caret.startOffset);
+        afterRange.setEnd(span, span.childNodes.length);
+        const afterFragment = afterRange.extractContents();
+        const br = document.createElement("br");
+        span.parentNode.insertBefore(br, span.nextSibling);
+        const remainderFirst = afterFragment.firstChild;
+        span.parentNode.insertBefore(afterFragment, br.nextSibling);
+        if (!String(span.textContent || "") && !span.querySelector("img")) span.remove();
+        const nextRange = document.createRange();
+        if (remainderFirst && remainderFirst.nodeType === Node.TEXT_NODE) {
+          nextRange.setStart(remainderFirst, 0);
+        } else if (remainderFirst) {
+          nextRange.setStartBefore(remainderFirst);
+        } else {
+          const empty = document.createTextNode("");
+          br.parentNode.insertBefore(empty, br.nextSibling);
+          nextRange.setStart(empty, 0);
+        }
+        nextRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(nextRange);
+        notesEditor.normalize();
+        syncNotes();
+        return true;
+      };
+      const splitNoteSizeSpansOnInnerBreaks = (editor) => {
+        Array.from(editor.querySelectorAll("span[data-note-size-delta]")).forEach((span) => {
+          const breakNode = Array.from(span.childNodes).find((node) => (
+            node.nodeType === Node.ELEMENT_NODE && ["BR", "DIV", "P"].includes(node.tagName)
+          )) || span.querySelector("br, div, p");
+          if (!breakNode || !span.contains(breakNode)) return;
+          const after = document.createRange();
+          after.setStartBefore(breakNode);
+          after.setEnd(span, span.childNodes.length);
+          const moved = after.extractContents();
+          span.parentNode.insertBefore(moved, span.nextSibling);
+          if (!String(span.textContent || "") && !span.querySelector("img")) span.remove();
+        });
+      };
+      const applyNotesLineSize = (step) => {
+        if (!notesEditor) return;
+        notesEditor.focus();
+        const range = notesLineRangeFromSelection(notesEditor);
+        if (!range) return;
+        const current = noteSizeDeltaFromNode(range.startContainer, notesEditor);
+        const next = clampNoteSizeDelta(current + Number(step || 0));
+        const existing = exclusiveNoteSizeSpan(range, notesEditor);
+        const nextRange = document.createRange();
+        if (existing) {
+          if (next === 0) {
+            const parent = existing.parentNode;
+            while (existing.firstChild) parent.insertBefore(existing.firstChild, existing);
+            nextRange.setStartBefore(existing);
+            parent.removeChild(existing);
+            nextRange.collapse(true);
+          } else {
+            existing.setAttribute("data-note-size-delta", formatNoteSizeDelta(next));
+            existing.style.fontSize = `calc(1em + ${formatNoteSizeDelta(next)}pt)`;
+            nextRange.selectNodeContents(existing);
+            nextRange.collapse(false);
+          }
+        } else {
+          const fragment = range.extractContents();
+          unwrapNoteSizeSpans(fragment);
+          let node = range.startContainer;
+          if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+          while (node && node !== notesEditor && node.matches?.("span[data-note-size-delta]")) {
+            if (String(node.textContent || "") || node.querySelector("br, img")) break;
+            const parent = node.parentNode;
+            range.setStartBefore(node);
+            range.collapse(true);
+            parent.removeChild(node);
+            node = parent && parent.nodeType === Node.ELEMENT_NODE ? parent : null;
+          }
+          if (!String(fragment.textContent || "")) {
+            range.insertNode(fragment);
+            syncNotes();
+            return;
+          }
+          if (next === 0) {
+            const last = fragment.lastChild;
+            range.insertNode(fragment);
+            if (last) {
+              nextRange.setStartAfter(last);
+              nextRange.collapse(true);
+            }
+          } else {
+            const wrapper = document.createElement("span");
+            wrapper.setAttribute("data-note-size-delta", formatNoteSizeDelta(next));
+            wrapper.style.fontSize = `calc(1em + ${formatNoteSizeDelta(next)}pt)`;
+            wrapper.appendChild(fragment);
+            range.insertNode(wrapper);
+            nextRange.selectNodeContents(wrapper);
+            nextRange.collapse(false);
+          }
+        }
+        notesEditor.querySelectorAll("span[data-note-size-delta]").forEach((span) => {
+          if (!String(span.textContent || "") && !span.querySelector("img")) span.remove();
+        });
+        notesEditor.normalize();
+        const selection = window.getSelection();
+        if (nextRange.startContainer) {
+          selection.removeAllRanges();
+          selection.addRange(nextRange);
+        }
+        syncNotes();
+      };
       if (notesEditor && notesInput) {
         notesEditor.innerHTML = notesToEditorHtml(notesInput.value);
-        notesEditor.addEventListener("input", syncNotes);
+        notesEditor.addEventListener("input", () => {
+          splitNoteSizeSpansOnInnerBreaks(notesEditor);
+          syncNotes();
+        });
         notesEditor.addEventListener("blur", syncNotes);
         editForm?.addEventListener("submit", syncNotes);
+        notesEditor.addEventListener("beforeinput", (event) => {
+          if (event.inputType !== "insertParagraph" && event.inputType !== "insertLineBreak") return;
+          if (breakOutOfNoteSizeSpan()) event.preventDefault();
+        });
         notesEditor.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+            if (breakOutOfNoteSizeSpan()) {
+              event.preventDefault();
+              return;
+            }
+          }
           if (!(event.metaKey || event.ctrlKey)) return;
           const key = event.key.toLowerCase();
           if (key !== "b" && key !== "i" && key !== "u") return;
@@ -819,6 +1163,10 @@
         document.querySelectorAll("[data-notes-command]").forEach((button) => {
           button.addEventListener("mousedown", (event) => event.preventDefault());
           button.addEventListener("click", () => applyNotesCommand(button.dataset.notesCommand || ""));
+        });
+        document.querySelectorAll("[data-notes-line-size]").forEach((button) => {
+          button.addEventListener("mousedown", (event) => event.preventDefault());
+          button.addEventListener("click", () => applyNotesLineSize(button.dataset.notesLineSize || "0"));
         });
       }
       const meetsInStateInfoButton = document.getElementById("contact-meets-in-state-info-button");
@@ -1515,6 +1863,25 @@
         textarea.addEventListener("input", () => autoGrow(textarea));
       });
 
+      const clipToPhoneColumnWidth = (value, input) => {
+        const text = String(value || "");
+        if (!text || !input) return text;
+        const probe = document.createElement("span");
+        const style = window.getComputedStyle(input);
+        probe.style.cssText = `position:absolute;left:-9999px;visibility:hidden;white-space:pre;font:${style.font}`;
+        document.body.appendChild(probe);
+        probe.textContent = "0".repeat(12);
+        const maxWidth = probe.getBoundingClientRect().width;
+        let clipped = text;
+        probe.textContent = clipped;
+        while (clipped && probe.getBoundingClientRect().width > maxWidth + 0.5) {
+          clipped = clipped.slice(0, -1);
+          probe.textContent = clipped;
+        }
+        probe.remove();
+        return clipped;
+      };
+
       const syncTypeControl = (control) => {
         const select = control?.querySelector("[data-contact-type-select]");
         const customInput = control?.querySelector("[data-contact-type-custom]");
@@ -1530,11 +1897,10 @@
         if (heading) heading.textContent = isBlank ? "Text for phone column" : "Phone";
         const phoneInput = control.closest(".contact-edit-row")?.querySelector('input[name="phone_value"]');
         if (phoneInput) {
+          phoneInput.removeAttribute("maxlength");
           if (isBlank) {
-            phoneInput.maxLength = 12;
-            if (phoneInput.value.length > 12) phoneInput.value = phoneInput.value.slice(0, 12);
-          } else {
-            phoneInput.removeAttribute("maxlength");
+            const clipped = clipToPhoneColumnWidth(phoneInput.value, phoneInput);
+            if (clipped !== phoneInput.value) phoneInput.value = clipped;
           }
         }
       };
@@ -1554,6 +1920,16 @@
           }
         });
         customInput?.addEventListener("input", () => syncTypeControl(control));
+        const phoneInput = control.closest(".contact-edit-row")?.querySelector('input[name="phone_value"]');
+        if (phoneInput && phoneInput.dataset.phoneColumnClipBound !== "true") {
+          phoneInput.dataset.phoneColumnClipBound = "true";
+          phoneInput.addEventListener("input", () => {
+            const select = control.querySelector("[data-contact-type-select]");
+            if (select?.value !== "Blank") return;
+            const clipped = clipToPhoneColumnWidth(phoneInput.value, phoneInput);
+            if (clipped !== phoneInput.value) phoneInput.value = clipped;
+          });
+        }
         syncTypeControl(control);
       };
 

@@ -906,6 +906,7 @@ function installLayoutGridControls() {
   const gapInput = document.getElementById("meeting_table_column_gap_px");
   const scaleInput = document.getElementById("screen_preview_scale");
   const fontSizeSelect = document.getElementById("meeting_base_font_size_pt");
+  const lineHeightInput = document.getElementById("meeting_line_height");
   if (!frame || !columnInput || !gapInput || !scaleInput) return;
 
   const usableWidthIn = parseFloat(frame.dataset.usableWidthIn || "3.22") || 3.22;
@@ -938,6 +939,16 @@ function installLayoutGridControls() {
     const gap = Math.max(0, readNumber(gapInput, 6));
     const previewScale = Math.max(40, readNumber(scaleInput, 220));
     const baseFontPt = Math.max(1, readNumber(fontSizeSelect, parseFloat(frame.dataset.baseFontPt || "8.5") || 8.5));
+    const lineHeight = Math.max(
+      0.8,
+      Math.min(
+        3,
+        readNumber(
+          lineHeightInput || { value: "" },
+          parseFloat(frame.dataset.lineHeight || "1.2") || 1.2
+        )
+      )
+    );
     const previewWidth = usableWidthIn * previewScale;
     const totalGap = gap * Math.max(0, columns - 1);
     const columnWidth = Math.max(8, (previewWidth - totalGap) / columns);
@@ -951,7 +962,10 @@ function installLayoutGridControls() {
     frame.style.setProperty("--editor-preview-width", `${previewWidth}px`);
     frame.style.setProperty("--editor-preview-scale", String(previewScale));
     frame.style.setProperty("--editor-base-font-px", `${(baseFontPt / 72) * previewScale}px`);
+    frame.style.setProperty("--editor-line-height", String(lineHeight));
+    frame.style.setProperty("--editor-display-line-height", String(lineHeight * 0.9));
     frame.dataset.baseFontPt = String(baseFontPt);
+    frame.dataset.lineHeight = String(lineHeight);
     syncColumnGuides(columns);
     if (typeof window.syncMeetingEditorRowFonts === "function") {
       window.syncMeetingEditorRowFonts();
@@ -973,7 +987,7 @@ function installLayoutGridControls() {
 
   columnInput.addEventListener("input", syncLayout);
   columnInput.addEventListener("change", syncLayout);
-  [gapInput, scaleInput].forEach((input) => {
+  [gapInput, scaleInput, lineHeightInput].filter(Boolean).forEach((input) => {
     input.addEventListener("input", syncLayout);
     input.addEventListener("change", () => {
       syncLayout({ syncCells: true });

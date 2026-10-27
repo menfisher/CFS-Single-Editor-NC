@@ -36,7 +36,18 @@
 
           <div class="editor-preset-cluster">
             <div class="editor-inline-heading">
-              <label class="form-label" for="book_layout_preset_id">Book Layout</label>
+              <div class="editor-book-layout-label-row">
+                <label class="form-label" for="book_layout_preset_id">Book Layout</label>
+                <button
+                  type="button"
+                  class="contact-notes-info-button"
+                  id="meeting-layout-info-button"
+                  aria-label="Book layout controls"
+                  title="Book layout controls"
+                >
+                  <span aria-hidden="true">i</span>
+                </button>
+              </div>
               {% if section.book_layout and section.book_layout.book_layout_preset_id %}
                 <a class="small-link" href="/address-book/pdf?preset_id={{ section.book_layout.book_layout_preset_id }}">Edit Layout</a>
               {% endif %}
@@ -54,6 +65,7 @@
             </div>
           </div>
 
+          <div class="editor-header-right">
           <div class="editor-grid-settings-cluster">
             <div class="editor-grid-cluster">
               <div class="editor-grid-cluster-title">Layout Grid</div>
@@ -78,6 +90,18 @@
                 {% endfor %}
               </select>
             </label>
+            <label class="form-label editor-meeting-line-spacing-field" for="meeting_line_height">
+              Line Spacing
+              <input
+                id="meeting_line_height"
+                name="meeting_line_height"
+                type="number"
+                min="0.8"
+                max="3"
+                step="0.05"
+                value="{{ "%.2f"|format(section.editor_canvas.line_height) }}"
+              >
+            </label>
           </div>
 
           <div class="editor-header-summary">
@@ -89,12 +113,24 @@
               </div>
             </div>
           </div>
+          </div>
         </div>
       </section>
 
       <section class="panel">
         <div class="editor-actions editor-actions-canvas">
-          <h3>Visual Canvas - Book page width</h3>
+          <div class="editor-canvas-heading-row">
+            <h3>Visual Canvas - Book page width</h3>
+            <button
+              type="button"
+              class="contact-notes-info-button"
+              id="meeting-canvas-info-button"
+              aria-label="Row toolbar"
+              title="Row toolbar"
+            >
+              <span aria-hidden="true">i</span>
+            </button>
+          </div>
           <p class="canvas-note">Text in row cells below approximate page position. Use Meeting Print Preview to see actual placement</p>
           <button type="button" class="danger-button delete-all-rows-button" id="delete-all-rows-button">
             Delete All Rows
@@ -104,6 +140,7 @@
         <div
           class="wysiwyg-frame"
           data-base-font-pt="{{ "%.1f"|format(section.editor_canvas.base_font_size_pt) }}"
+          data-line-height="{{ "%.2f"|format(section.editor_canvas.line_height) }}"
           data-screen-preview-scale="{{ "%.4f"|format(section.editor_canvas.screen_preview_scale) }}"
           data-usable-width-in="{{ "%.4f"|format(section.editor_canvas.usable_width_in) }}"
           style="--editor-columns: {{ section.editor_canvas.column_count }}; --editor-column-width: {{ section.editor_canvas.column_width_px_preview }}px; --editor-column-gap: {{ section.editor_canvas.column_gap_px }}px; --editor-preview-width: {{ section.editor_canvas.preview_width_px }}px; --editor-preview-scale: {{ section.editor_canvas.screen_preview_scale }}; --editor-base-font-px: {{ (section.editor_canvas.base_font_size_pt / 72.0) * section.editor_canvas.screen_preview_scale }}px; --editor-line-height: {{ section.editor_canvas.line_height }}; --editor-display-line-height: {{ section.editor_canvas.line_height * 0.9 }}; --editor-font-family: '{{ section.editor_canvas.font_family }}';"
@@ -226,17 +263,17 @@
                       </details>
                     </div>
                     {% if row.is_column_flow_row %}
-                      <div class="insert-split-group">
+                      {% if row.flow_primary_columns %}
+                      <div class="insert-split" data-insert-split>
                         <button
                           type="submit"
-                          class="compact-button insert-main-button"
+                          class="compact-button insert-split-main"
                           data-editor-action="add-cell"
                           formaction="/meetings/v2/sections/{{ section.id }}/rows/{{ row.id }}/cells/add"
                           formmethod="post"
                         >
                           Add Column
                         </button>
-                        {% if row.flow_primary_columns %}
                           <details class="insert-dropdown" data-insert-details>
                             <summary class="compact-button insert-split-toggle" data-insert-toggle aria-haspopup="true">
                               ▾
@@ -257,18 +294,59 @@
                               {% endfor %}
                             </div>
                           </details>
-                        {% endif %}
                       </div>
+                      {% else %}
+                        <button
+                          type="submit"
+                          class="compact-button"
+                          data-editor-action="add-cell"
+                          formaction="/meetings/v2/sections/{{ section.id }}/rows/{{ row.id }}/cells/add"
+                          formmethod="post"
+                        >
+                          Add Column
+                        </button>
+                      {% endif %}
                     {% else %}
-                      <button
-                        type="submit"
-                        class="compact-button"
-                        data-editor-action="add-cell"
-                        formaction="/meetings/v2/sections/{{ section.id }}/rows/{{ row.id }}/cells/add"
-                        formmethod="post"
-                      >
-                        Add Cell
-                      </button>
+                      <div class="insert-split" data-insert-split>
+                        <button
+                          type="submit"
+                          class="compact-button insert-split-main"
+                          data-editor-action="add-cell"
+                          formaction="/meetings/v2/sections/{{ section.id }}/rows/{{ row.id }}/cells/add"
+                          formmethod="post"
+                        >
+                          Add Cell
+                        </button>
+                        <details class="insert-dropdown" data-insert-details>
+                          <summary class="compact-button insert-split-toggle" data-insert-toggle aria-haspopup="true">
+                            ▾
+                          </summary>
+                          <div class="insert-menu-list" data-insert-menu>
+                            <button
+                              type="submit"
+                              class="insert-menu-item"
+                              name="cell_count"
+                              value="2"
+                              data-insert-choice="add-2"
+                              formaction="/meetings/v2/sections/{{ section.id }}/rows/{{ row.id }}/cells/add"
+                              formmethod="post"
+                            >
+                              Add 2 cells
+                            </button>
+                            <button
+                              type="submit"
+                              class="insert-menu-item"
+                              name="cell_count"
+                              value="3"
+                              data-insert-choice="add-3"
+                              formaction="/meetings/v2/sections/{{ section.id }}/rows/{{ row.id }}/cells/add"
+                              formmethod="post"
+                            >
+                              Add 3 cells
+                            </button>
+                          </div>
+                        </details>
+                      </div>
                     {% endif %}
                     <button
                       type="submit"
@@ -308,6 +386,20 @@
                       >
                       <span>group with table below</span>
                     </label>
+                    {% if not section.is_field_end_list %}
+                    <label class="wysiwyg-row-group-toggle" for="no_meeting_association_{{ row.id }}">
+                      <input
+                        id="no_meeting_association_{{ row.id }}"
+                        name="no_meeting_association_{{ row.id }}"
+                        type="checkbox"
+                        value="1"
+                        data-table-start-option
+                        {% if row.no_meeting_association %}checked{% endif %}
+                        {% if not row.is_table_start_row %}disabled{% endif %}
+                      >
+                      <span>no meeting association</span>
+                    </label>
+                    {% endif %}
                   </div>
                 </div>
 
@@ -568,6 +660,54 @@
 
     <form method="post" action="/meetings/v2/sections/{{ section.id }}/delete" id="delete-meetingdata-section-form" hidden></form>
 
+    <dialog class="app-modal" id="meeting-canvas-info-modal" aria-labelledby="meeting-canvas-info-title">
+      <form method="dialog" class="app-modal-panel">
+        <div class="app-modal-header">
+          <h3 class="app-modal-title" id="meeting-canvas-info-title">Row toolbar</h3>
+          <p class="app-modal-copy"><strong>Order</strong> sets this row's position in the meeting. Lower numbers print first.</p>
+          <p class="app-modal-copy"><strong>content</strong> is a regular row with cells you can type in.</p>
+          <p class="app-modal-copy"><strong>blank</strong> leaves an empty spacer row.</p>
+          <p class="app-modal-copy"><strong>divider</strong> draws a horizontal divider line.</p>
+          <p class="app-modal-copy"><strong>column flow</strong> lays out text in flowing columns. Use Add Column for a new column, and the chevron to stack a column under an existing one.</p>
+          <p class="app-modal-copy"><strong>underlined</strong> underlines this row.</p>
+          {% if section.is_field_end_list %}
+          <p class="app-modal-copy"><strong>table start</strong> begins a table. Two options appear: <strong>print new page</strong> starts this table on a new printed page. <strong>group with table below</strong> keeps this table with the next. If print new page is also on, the pair shares that new page when they fit. Field lists already print at the end of the Field without a meeting heading.</p>
+          {% else %}
+          <p class="app-modal-copy"><strong>table start</strong> begins a table. Three options appear: <strong>print new page</strong> starts this table on a new printed page. <strong>group with table below</strong> keeps this table with the next. If print new page is also on, the pair shares that new page when they fit. <strong>no meeting association</strong> prints an extra table behind a meeting without the meeting name at the top. This option appears on regular meetings, not Field lists.</p>
+          {% endif %}
+          <p class="app-modal-copy"><strong>table end</strong> ends the table.</p>
+          <p class="app-modal-copy"><strong>Font size</strong> sets this row's type size. Rows after table start can keep that table's size until table end.</p>
+          <p class="app-modal-copy"><strong>Insert Blank Row Below</strong> adds a row under this one. The chevron chooses New Row, Divider Line, Blank Row, or Cloned Row.</p>
+          <p class="app-modal-copy"><strong>Add Cell</strong> adds one cell. The chevron adds 2 or 3 cells. On a column-flow row this is Add Column.</p>
+          <p class="app-modal-copy"><strong>Delete Row</strong> removes this entire row.</p>
+          <p class="app-modal-copy"><strong>Move</strong> drags a cell to a new column position.</p>
+          <p class="app-modal-copy"><strong>L</strong>, <strong>C</strong>, and <strong>R</strong> left-, center-, or right-align the cell.</p>
+          <p class="app-modal-copy"><strong>Delete</strong> on a cell removes that cell.</p>
+        </div>
+        <div class="app-modal-actions">
+          <button type="submit" class="contact-card-button contact-card-button-edit" value="close">OK</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="app-modal" id="meeting-layout-info-modal" aria-labelledby="meeting-layout-info-title">
+      <form method="dialog" class="app-modal-panel">
+        <div class="app-modal-header">
+          <h3 class="app-modal-title" id="meeting-layout-info-title">Book layout controls</h3>
+          <p class="app-modal-copy"><strong>Book Layout</strong> chooses the printed book size and page preset for this meeting, such as Pocket Address Book. Populated from Address Book Settings.</p>
+          <p class="app-modal-copy"><strong>Edit Layout</strong> opens that preset so you can change page size, margins, and other book settings.</p>
+          <p class="app-modal-copy"><strong>Columns</strong> sets how many layout-grid columns a meeting row uses when you place cells.</p>
+          <p class="app-modal-copy"><strong>Gap</strong> sets the space between those grid columns.</p>
+          <p class="app-modal-copy"><strong>Preview Scale</strong> zooms the on-screen editor preview. The printed book stays the same size.</p>
+          <p class="app-modal-copy"><strong>Font Size</strong> sets the meeting content font size for this meeting.</p>
+          <p class="app-modal-copy"><strong>Line Spacing</strong> sets the space between meeting lines. Changes are in 0.05 steps and save with Save Layout.</p>
+        </div>
+        <div class="app-modal-actions">
+          <button type="submit" class="contact-card-button contact-card-button-edit" value="close">OK</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog class="app-modal" id="delete-meetingdata-section-modal">
       <form method="dialog" class="app-modal-panel" id="delete-meetingdata-section-modal-form">
         <div class="app-modal-header">
@@ -622,7 +762,21 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="/static/js/meeting_editor.js?v=27"></script>
+  <script src="/static/js/meeting_editor.js?v=28"></script>
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      const layoutInfoButton = document.getElementById("meeting-layout-info-button");
+      const layoutInfoModal = document.getElementById("meeting-layout-info-modal");
+      layoutInfoButton?.addEventListener("click", () => {
+        if (typeof layoutInfoModal?.showModal === "function") layoutInfoModal.showModal();
+      });
+      const canvasInfoButton = document.getElementById("meeting-canvas-info-button");
+      const canvasInfoModal = document.getElementById("meeting-canvas-info-modal");
+      canvasInfoButton?.addEventListener("click", () => {
+        if (typeof canvasInfoModal?.showModal === "function") canvasInfoModal.showModal();
+      });
+    });
+  </script>
   <script>
     window.addEventListener("DOMContentLoaded", () => {
       const deleteButton = document.getElementById("delete-all-rows-button");
