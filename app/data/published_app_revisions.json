@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.243",
+      "version": "1.244",
       "date_display": "10/26/2026",
+      "description": "Printed phone letters sit closer to the number while last names stay lined up. A Blank phone label prints custom text in the phone column, with an optional letter/code box, a Text for phone column heading, and a 12-character cap. Phones print in Edit-page order."
+    },
+    {
+      "date_display": "10/26/2026",
+      "version": "1.243",
       "description": "Field lists can be added, organized, renamed, and deleted from the MeetingData Editor, and they print at the end of the Field. Table of contents fields stay together, left-aligned addresses line up with children and notes, and the sign-in busy modal no longer blinks."
     },
     {
