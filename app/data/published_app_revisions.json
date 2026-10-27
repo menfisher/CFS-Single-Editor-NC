@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.245",
+      "version": "1.246",
+      "date_display": "10/27/2026",
+      "description": "MeetingData Editor adds canvas and Book Layout help, Line Spacing, Add 2/3 cells, and keeps the Add Column chevron beside the button. Print new page stays; no meeting association is back on regular meetings and hidden on Field lists. Home phones print without SMS links, notes can change line size, family-name-only contacts print bold CAPS, and phones keep Edit order with Mobile-first labels and Blank column text."
+    },
+    {
       "date_display": "10/26/2026",
+      "version": "1.245",
       "description": "A table-start row can Print new page so Field lists start on their own page; grouped tables stay together on that page when they fit. The MeetingData Editor no longer shows No meeting association."
     },
     {
