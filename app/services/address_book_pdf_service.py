@@ -822,14 +822,45 @@ def _contact_text_columns(
     font_size: float,
     tw,
 ) -> tuple[float, float, float, float, float]:
-    """16ch phone stack: 12ch number, 1ch gap, 2-letter code plus 1 space, then the name."""
+    """16ch phone stack: name starts at 16ch. Letter follows the drawn number plus one space."""
     ch_width = tw("0", font_size)
     phone_x = margin_left
-    phone_code_x = phone_x + (ch_width * 12) + ch_width
     main_text_x = phone_x + (ch_width * 16)
+    # Legacy 13ch tab — draw_phone uses _phone_letter_x instead so letters sit tight.
+    phone_code_x = phone_x + (ch_width * 12) + ch_width
     continuation_x = main_text_x + ch_width
     name_max_width = max(24.0, page_width - margin_right - continuation_x)
     return phone_x, phone_code_x, main_text_x, continuation_x, name_max_width
+
+
+def _phone_display_text(phone_value: object) -> str:
+    cleaned = _clean(phone_value)
+    digits = _phone_digits(cleaned)
+    if len(digits) == 10:
+        return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
+    return cleaned
+
+
+def _phone_letter_x(
+    phone_text: str,
+    phone_x: float,
+    main_text_x: float,
+    font_size: float,
+    tw,
+    code: str = "",
+) -> float:
+    """Place the phone letter after the drawn number plus one space.
+
+    Last names stay at main_text_x. Clamp so a long number or 2-letter code
+    cannot collide with the name column.
+    """
+    space = tw(" ", font_size)
+    desired = phone_x + tw(phone_text, font_size) + space
+    code_width = tw(code, font_size) if code else 0.0
+    max_x = main_text_x - space - code_width
+    if max_x < phone_x:
+        return phone_x
+    return min(desired, max_x)
 
 
 def _text_width(text: str, size: float, font_family: str = "Arial", *, bold: bool = False) -> float:
@@ -2489,7 +2520,7 @@ def build_address_book_pdf(
         phones = list(contact.get("phones") or [])
         addresses = list(contact.get("address_entries") or contact.get("addresses") or [])
         name = _clean(contact.get("name"))
-        phone_x, phone_code_x, main_text_x, continuation_x, name_max_width = _contact_text_columns(
+        phone_x, _phone_code_x, main_text_x, continuation_x, name_max_width = _contact_text_columns(
             margin_left, page_width, margin_right, font_size, tw
         )
         # Addresses never use the phone column, even when right-aligned.
@@ -2636,7 +2667,7 @@ def build_address_book_pdf(
                     phones = list(contact.get("phones") or [])
                     addresses = list(contact.get("address_entries") or contact.get("addresses") or [])
                     name = _clean(contact.get("name"))
-                    phone_x, phone_code_x, main_text_x, continuation_x, name_max_width = _contact_text_columns(
+                    phone_x, _phone_code_x, main_text_x, continuation_x, name_max_width = _contact_text_columns(
                         margin_left, page_width, margin_right, font_size, tw
                     )
                     # Addresses never use the phone column, even when right-aligned.
@@ -2706,6 +2737,7 @@ def build_address_book_pdf(
                     def draw_phone(phone_item: object, *, use_full_custom_label: bool = False) -> None:
                         phone_value = _clean(phone_item.get("value") if isinstance(phone_item, dict) else phone_item)
                         digits = _phone_digits(phone_value)
+                        display_text = _phone_display_text(phone_value)
                         if len(digits) == 10:
                             call_text = f"{digits[:3]}-{digits[3:6]}"
                             text_text = digits[6:]
@@ -2719,7 +2751,10 @@ def build_address_book_pdf(
                             add_text(phone_value, phone_x)
                         custom_label = _clean(phone_item.get("custom_label") if isinstance(phone_item, dict) else "")
                         phone_code = custom_label if use_full_custom_label and custom_label else _clean(phone_item.get("code") if isinstance(phone_item, dict) else "")
-                        add_text(phone_code, phone_code_x)
+                        add_text(
+                            phone_code,
+                            _phone_letter_x(display_text, phone_x, main_text_x, font_size, tw, phone_code),
+                        )
 
                     phones_drawn = 0
                     for index, line in enumerate(name_lines):

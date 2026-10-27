@@ -272,7 +272,11 @@ def build_contacts_vcard_bytes() -> tuple[str, bytes]:
             phone_value = str(item.get("phone_value") or "").strip()
             if not phone_value:
                 continue
-            phone_type = str(item.get("phone_type") or "").strip().upper() or "VOICE"
+            raw_phone_type = str(item.get("phone_type") or "").strip()
+            if raw_phone_type.lower() in {"blank", "__blank__", "no label"}:
+                phone_type = "VOICE"
+            else:
+                phone_type = raw_phone_type.upper() or "VOICE"
             lines.append(_vcard_line(f"TEL;TYPE={phone_type}", phone_value))
         for item in contact.get("emails") or []:
             email_value = str(item.get("email_value") or "").strip()

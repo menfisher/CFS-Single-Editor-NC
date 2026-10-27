@@ -679,8 +679,21 @@ def _normalize_phone_type(value: object) -> str:
     return re.sub(r"[^a-z0-9]+", " ", _clean(value).lower()).strip()
 
 
+def _is_blank_phone_type(phone_type: object) -> bool:
+    return _normalize_phone_type(phone_type) in {"", "blank", "no label"}
+
+
+BLANK_PHONE_COLUMN_MAX_CHARS = 12
+
+
+def _clip_blank_phone_column_text(value: object) -> str:
+    return _clean(value)[:BLANK_PHONE_COLUMN_MAX_CHARS]
+
+
 def _known_phone_code(phone_type: object) -> str | None:
     normalized = _normalize_phone_type(phone_type)
+    if _is_blank_phone_type(phone_type):
+        return ""
     if normalized in {"home", "house"}:
         return ""
     if normalized in {"mobile", "cell", "cellular", "cell phone"}:
@@ -984,6 +997,7 @@ def _format_contact_phones(contact: dict[str, Any]) -> list[dict[str, str]]:
         for item in contact.get("phones", [])
         if _clean(item.get("phone_value"))
     ]
+    # Keep Edit-page / phones.position order. Do not sort by number or label.
     household_labels = _household_phone_labels(contact, raw_phones)
     has_household_people = len(household_labels) > 1
     owner_labels = _resolve_phone_owner_labels(contact, raw_phones)
@@ -1000,7 +1014,9 @@ def _format_contact_phones(contact: dict[str, Any]) -> list[dict[str, str]]:
             owner_given_name=owner_labels[index],
         )
         phone_code_label = _phone_code_label_for_contact(contact, person_label)
-        if _is_home_phone_type(phone_type):
+        if _is_blank_phone_type(phone_type):
+            code = _clean(item.get("phone_code") or item.get("code"))
+        elif _is_home_phone_type(phone_type):
             code = ""
         elif _is_mobile_phone_type(phone_type):
             if has_household_people:
@@ -1040,9 +1056,14 @@ def _format_contact_phones(contact: dict[str, Any]) -> list[dict[str, str]]:
             custom_label = phone_type_value
         formatted.append(
             {
-                "value": _clean(item.get("phone_value")),
+                "value": (
+                    _clip_blank_phone_column_text(item.get("phone_value"))
+                    if _is_blank_phone_type(phone_type)
+                    else _clean(item.get("phone_value"))
+                ),
                 "code": code,
                 "type": _clean(phone_type),
+                "phone_code": _clean(item.get("phone_code")) if _is_blank_phone_type(phone_type) else "",
                 "custom_label": custom_label,
                 "owner_given_name": _clean(owner_labels[index]) or person_label,
             }
@@ -1074,8 +1095,14 @@ def _reformat_contact_phones_from_payload(contact: dict[str, Any]) -> list[dict[
         "relationships": relationships or list(contact.get("relationships") or []),
         "phones": [
             {
-                "phone_type": phone.get("type"),
-                "phone_value": phone.get("value"),
+                "phone_type": phone.get("type") or phone.get("phone_type"),
+                "phone_value": phone.get("value") or phone.get("phone_value"),
+                "phone_code": phone.get("phone_code")
+                or (
+                    phone.get("code")
+                    if _is_blank_phone_type(phone.get("type") or phone.get("phone_type"))
+                    else ""
+                ),
                 "owner_given_name": phone.get("owner_given_name"),
             }
             for phone in contact.get("phones") or []
@@ -1797,6 +1824,7 @@ def _field_list_merge_contact_phones(contacts: list[dict[str, Any]]) -> list[dic
                         "value": value,
                         "code": code,
                         "type": _clean(phone.get("type")),
+                        "phone_code": _clean(phone.get("phone_code")),
                         "custom_label": _clean(phone.get("custom_label")),
                         "owner_given_name": _clean(phone.get("owner_given_name")) or _clean(contact.get("given_name")),
                     }
@@ -4246,23 +4274,32 @@ main {{
   min-width: 0;
 }}
 .print-field-list-phone-line {{
-  display: grid;
-  grid-template-columns: 12ch 3ch;
-  gap: 1ch;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  column-gap: 0.33em;
   white-space: nowrap;
   width: 16ch;
-  overflow: visible;
+  max-width: 16ch;
+  overflow: hidden;
+}}
+.print-field-list-phone-value {{
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }}
 .print-field-list-phone-code {{
+  flex: 0 0 auto;
   display: inline-block;
-  min-width: 3ch;
+  max-width: 3ch;
+  overflow: hidden;
   white-space: pre;
 }}
 .print-field-list-phone-line.is-primary-phone .print-field-list-phone-code {{
-  min-width: 3ch;
   max-width: 3ch;
   overflow: hidden;
 }}
+.print-field-list-phone-line.is-secondary-phone,
 .print-field-list-phone-line.is-secondary-phone .print-field-list-phone-code {{
   max-width: none;
   overflow: visible;
@@ -4274,7 +4311,8 @@ main {{
 }}
 .print-field-list-phone-pair {{
   display: inline-flex;
-  gap: 1ch;
+  align-items: baseline;
+  gap: 0.33em;
   white-space: nowrap;
 }}
 .print-field-list-phone-comma {{

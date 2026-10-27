@@ -9715,7 +9715,7 @@ def _contact_person_payload(contact: dict) -> dict:
             continue
         phone_payload = {"value": phone_value}
         phone_type = _normalize_google_type(item.get("phone_type"))
-        if phone_type:
+        if phone_type and phone_type.lower().replace(" ", "") not in {"blank", "__blank__", "nolabel"}:
             phone_payload["type"] = phone_type
         phones.append(phone_payload)
     if phones:

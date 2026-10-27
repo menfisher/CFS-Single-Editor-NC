@@ -64,8 +64,10 @@
               {% if item.phone_value %}
                 <li class="contact-detail-line">
                   <span class="contact-detail-value">{{ item.phone_value }}</span>
-                  {% if item.phone_type %}
+                  {% if item.phone_type and item.phone_type|lower not in ["blank", "__blank__", "no label"] %}
                     <span class="contact-detail-type"> - {{ item.phone_type }}</span>
+                  {% elif item.phone_code %}
+                    <span class="contact-detail-type"> - {{ item.phone_code }}</span>
                   {% endif %}
                   <span class="contact-detail-actions">
                     <a

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS phones (
   position INTEGER NOT NULL,
   phone_type TEXT,
   phone_value TEXT,
+  phone_code TEXT NOT NULL DEFAULT '',
   FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
 );
 

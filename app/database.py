@@ -109,6 +109,7 @@ def _apply_database_migrations(conn: sqlite3.Connection) -> None:
     _ensure_field_list_tables(conn)
     _ensure_field_list_sync_columns(conn)
     _ensure_address_structured_columns(conn)
+    _ensure_phone_code_column(conn)
     conn.execute("INSERT OR IGNORE INTO google_sync_accounts (id) VALUES (1)")
     conn.execute("INSERT OR IGNORE INTO google_sync_state (id) VALUES (1)")
     _clear_legacy_address_book_pdf_share_defaults(conn)
@@ -876,6 +877,20 @@ def _ensure_field_list_sync_columns(conn: sqlite3.Connection) -> None:
             )
 
 
+
+
+def _ensure_phone_code_column(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(phones)").fetchall()
+    }
+    if columns and "phone_code" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE phones
+            ADD COLUMN phone_code TEXT NOT NULL DEFAULT ''
+            """
+        )
 
 
 def _ensure_address_structured_columns(conn: sqlite3.Connection) -> None:

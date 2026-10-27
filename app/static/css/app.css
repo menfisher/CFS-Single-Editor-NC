@@ -373,13 +373,15 @@
 }
 
 .address-book-pdf-phone-line {
-  display: grid;
-  /* phone | 2 initials + 1 blank (3ch so husband/wife codes stay aligned). */
-  grid-template-columns: 12ch 3ch;
-  column-gap: 1ch;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  /* One space after the drawn number; 16ch stack still holds the name column. */
+  column-gap: 0.33em;
   width: 16ch;
+  max-width: 16ch;
   white-space: nowrap;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .address-book-pdf-phone-value,
@@ -390,6 +392,9 @@
 }
 
 .address-book-pdf-phone-value {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   text-align: left;
 }
 
@@ -403,15 +408,16 @@
 }
 
 .address-book-pdf-phone-code {
+  flex: 0 0 auto;
   text-align: left;
   display: inline-block;
-  min-width: 3ch;
   max-width: 3ch;
   overflow: hidden;
   white-space: pre;
 }
 
 /* Secondary / full labels may use 3 letters and extend past the reserved slot. */
+.address-book-pdf-phone-line.is-secondary-phone,
 .address-book-pdf-phone-line.is-secondary-phone .address-book-pdf-phone-code,
 .address-book-pdf-phone-code.is-full-phone-label {
   max-width: none;
@@ -7600,26 +7606,36 @@ button.site-nav-dropdown-item:hover {
 }
 
 .field-list-phone-line {
-  display: grid;
-  /* phone | gap | reserved 2-letter slot (3ch so "Ma" is not clipped) */
-  grid-template-columns: 12ch 3ch;
-  column-gap: 1ch;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  /* One space after the drawn number; 16ch stack still holds the name column. */
+  column-gap: 0.33em;
   width: 16ch;
-  overflow: visible;
+  max-width: 16ch;
+  overflow: hidden;
+}
+
+.field-list-phone-value {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .field-list-phone-code {
+  flex: 0 0 auto;
   display: inline-block;
-  min-width: 3ch;
+  max-width: 3ch;
+  overflow: hidden;
   white-space: pre;
 }
 
 .field-list-phone-line.is-primary-phone .field-list-phone-code {
-  min-width: 3ch;
   max-width: 3ch;
   overflow: hidden;
 }
 
+.field-list-phone-line.is-secondary-phone,
 .field-list-phone-line.is-secondary-phone .field-list-phone-code {
   max-width: none;
   overflow: visible;
@@ -7633,7 +7649,8 @@ button.site-nav-dropdown-item:hover {
 
 .field-list-phone-pair {
   display: inline-flex;
-  gap: 1ch;
+  align-items: baseline;
+  gap: 0.33em;
   white-space: nowrap;
 }
 

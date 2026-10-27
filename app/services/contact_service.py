@@ -881,7 +881,7 @@ def list_contacts(
         placeholders = ",".join("?" for _ in contact_ids)
         phone_rows = fetch_all(
             f"""
-            SELECT contact_id, phone_type, phone_value
+            SELECT contact_id, phone_type, phone_value, phone_code
             FROM phones
             WHERE contact_id IN ({placeholders})
             ORDER BY contact_id, position, id
@@ -932,7 +932,12 @@ def list_contacts(
                 (
                     f"{item['phone_type']}  {item['phone_value']}"
                     if str(item.get("phone_type") or "").strip()
-                    else str(item.get("phone_value") or "").strip()
+                    and str(item.get("phone_type") or "").strip().lower() not in {"blank", "__blank__", "no label"}
+                    else (
+                        f"{item['phone_code']}  {item['phone_value']}"
+                        if str(item.get("phone_code") or "").strip()
+                        else str(item.get("phone_value") or "").strip()
+                    )
                 )
                 for item in contact_phone_rows
                 if str(item.get("phone_value") or "").strip()
@@ -1046,7 +1051,7 @@ def list_contacts_for_field_list_print() -> list[dict]:
     phones_by_contact: dict[int, list[dict]] = {}
     for row in fetch_all(
         f"""
-        SELECT contact_id, phone_type, phone_value
+        SELECT contact_id, phone_type, phone_value, phone_code
         FROM phones
         WHERE contact_id IN ({placeholders})
         ORDER BY contact_id, position, id
@@ -1135,7 +1140,7 @@ def get_contact_detail(contact_id: int) -> dict | None:
     contact["phones"] = _normalize_child_rows(
         "phones",
         contact_id,
-        ("phone_type", "phone_value"),
+        ("phone_type", "phone_value", "phone_code"),
     )
     contact["addresses"] = _normalize_child_rows(
         "addresses",
@@ -1228,6 +1233,7 @@ def _build_contact_update_payload(contact: dict) -> dict:
         "relationship_value": [str(item.get("relation_value") or "") for item in contact.get("relationships", [])],
         "phone_type": [str(item.get("phone_type") or "") for item in contact.get("phones", [])],
         "phone_value": [str(item.get("phone_value") or "") for item in contact.get("phones", [])],
+        "phone_code": [str(item.get("phone_code") or "") for item in contact.get("phones", [])],
         "email_type": [str(item.get("email_type") or "") for item in contact.get("emails", [])],
         "email_value": [str(item.get("email_value") or "") for item in contact.get("emails", [])],
         "address_type": [str(item.get("address_type") or "") for item in contact.get("addresses", [])],
@@ -1437,6 +1443,15 @@ def _normalize_repeatable_rows(*columns: list[str]) -> list[tuple[str, ...]]:
     return rows
 
 
+def _phone_row_parts(row: tuple[str, ...]) -> tuple[str, str, str]:
+    phone_type = row[0] if len(row) > 0 else ""
+    phone_value = row[1] if len(row) > 1 else ""
+    phone_code = row[2] if len(row) > 2 else ""
+    if re.sub(r"[^a-z0-9]+", " ", phone_type.lower()).strip() in {"", "blank", "no label"}:
+        phone_value = phone_value[:12]
+    return phone_type, phone_value, phone_code
+
+
 
 
 def _normalize_address_rows(payload: dict) -> list[tuple[str, ...]]:
@@ -1606,10 +1621,14 @@ def _collect_contact_edit_entries(
     ])
 
     existing_phones = [dict(item) for item in existing_contact.get("phones", [])]
-    next_phones = [{"phone_type": phone_type, "phone_value": phone_value} for phone_type, phone_value in phone_rows]
+    next_phones = [
+        {"phone_type": phone_type, "phone_value": phone_value, "phone_code": phone_code}
+        for phone_type, phone_value, phone_code in (_phone_row_parts(row) for row in phone_rows)
+    ]
     _collect_repeatable_edit_entries(entries, existing_phones, next_phones, [
         ("phone_value", "Phone"),
         ("phone_type", "Phone Label"),
+        ("phone_code", "Phone letter"),
     ])
 
     existing_addresses = [dict(item) for item in existing_contact.get("addresses", [])]
@@ -2002,6 +2021,7 @@ def update_contact(contact_id: int, payload: dict, *, queue_google_sync: bool = 
     phone_rows = _normalize_repeatable_rows(
         payload.get("phone_type", []),
         payload.get("phone_value", []),
+        payload.get("phone_code", []),
     )
     email_rows = _normalize_repeatable_rows(
         payload.get("email_type", []),
@@ -2098,13 +2118,14 @@ def update_contact(contact_id: int, payload: dict, *, queue_google_sync: bool = 
                 (contact_id, position, relation_type, relation_value),
             )
 
-        for position, (phone_type, phone_value) in enumerate(phone_rows, start=1):
+        for position, phone_row in enumerate(phone_rows, start=1):
+            phone_type, phone_value, phone_code = _phone_row_parts(phone_row)
             conn.execute(
                 """
-                INSERT INTO phones (contact_id, position, phone_type, phone_value)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO phones (contact_id, position, phone_type, phone_value, phone_code)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (contact_id, position, phone_type, phone_value),
+                (contact_id, position, phone_type, phone_value, phone_code),
             )
 
         for position, (email_type, email_value) in enumerate(email_rows, start=1):
@@ -2443,6 +2464,7 @@ def create_contact(payload: dict) -> int:
     phone_rows = _normalize_repeatable_rows(
         payload.get("phone_type", []),
         payload.get("phone_value", []),
+        payload.get("phone_code", []),
     )
     email_rows = _normalize_repeatable_rows(
         payload.get("email_type", []),
@@ -2551,13 +2573,14 @@ def create_contact(payload: dict) -> int:
                 (contact_id, position, relation_type, relation_value),
             )
 
-        for position, (phone_type, phone_value) in enumerate(phone_rows, start=1):
+        for position, phone_row in enumerate(phone_rows, start=1):
+            phone_type, phone_value, phone_code = _phone_row_parts(phone_row)
             conn.execute(
                 """
-                INSERT INTO phones (contact_id, position, phone_type, phone_value)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO phones (contact_id, position, phone_type, phone_value, phone_code)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (contact_id, position, phone_type, phone_value),
+                (contact_id, position, phone_type, phone_value, phone_code),
             )
 
         for position, (email_type, email_value) in enumerate(email_rows, start=1):

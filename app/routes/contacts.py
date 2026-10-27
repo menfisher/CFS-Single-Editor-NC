@@ -207,6 +207,7 @@ def _build_contact_payload(form, uploaded_photo_url: str = "") -> dict:
         "relationship_value": form.getlist("relationship_value"),
         "phone_type": form.getlist("phone_type"),
         "phone_value": form.getlist("phone_value"),
+        "phone_code": form.getlist("phone_code"),
         "email_type": form.getlist("email_type"),
         "email_value": form.getlist("email_value"),
         "address_type": form.getlist("address_type"),

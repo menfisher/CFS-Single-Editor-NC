@@ -1,7 +1,10 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 import fitz
 
+from app.database import initialize_database, set_request_db_path
 from app.services.address_book_pdf_service import (
     _PdfImage,
     _PdfLine,
@@ -10,6 +13,8 @@ from app.services.address_book_pdf_service import (
     _build_toc_pages,
     _center_text_x,
     _contact_text_columns,
+    _phone_display_text,
+    _phone_letter_x,
     _text_width,
     build_address_book_pdf,
 )
@@ -65,21 +70,144 @@ class PdfEmbeddedFontTests(unittest.TestCase):
         self.assertGreater(tw(full, 7), name_max)
         self.assertLessEqual(tw(head, 7), name_max)
 
-    def test_phone_letter_slot_is_two_characters_plus_one_space(self) -> None:
-        if not resolve_pdf_font_path("Verdana", "regular"):
-            self.skipTest("Verdana is not installed on this computer")
+    def test_phone_letter_follows_number_and_names_share_x(self) -> None:
+        family = "Verdana" if resolve_pdf_font_path("Verdana", "regular") else "Arial"
 
         def tw(text: str, size: float) -> float:
-            return _text_width(text, size, "Verdana")
+            return _text_width(text, size, family)
 
-        phone_x, phone_code_x, main_text_x, _cont_x, _name_max = _contact_text_columns(
+        phone_x, _legacy_code_x, main_text_x, _cont_x, _name_max = _contact_text_columns(
             0.14 * 72, 3.5 * 72, 0.14 * 72, 7, tw
         )
         ch = tw("0", 7)
-        self.assertAlmostEqual((phone_code_x - phone_x) / ch, 13.0, places=5)
-        self.assertAlmostEqual((main_text_x - phone_code_x) / ch, 3.0, places=5)
-        after_two_letter_code = phone_code_x + (ch * 2)
-        self.assertAlmostEqual((main_text_x - after_two_letter_code) / ch, 1.0, places=5)
+        space = tw(" ", 7)
+        self.assertAlmostEqual((main_text_x - phone_x) / ch, 16.0, places=5)
+
+        phone = _phone_display_text("704-965-6271")
+        letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "M")
+        self.assertAlmostEqual(letter_x, phone_x + tw(phone, 7) + space, places=5)
+        self.assertLess(letter_x - (phone_x + tw(phone, 7)), space * 1.15)
+        self.assertLess(letter_x, phone_x + (ch * 13) - space)
+
+        two_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "wk")
+        self.assertLessEqual(two_letter_x + tw("wk", 7) + space, main_text_x + 0.01)
+
+        other_phone_x, _other_legacy, other_main_x, _other_cont, _other_max = _contact_text_columns(
+            0.14 * 72, 3.5 * 72, 0.14 * 72, 7, tw
+        )
+        self.assertAlmostEqual(main_text_x, other_main_x, places=5)
+        self.assertAlmostEqual(phone_x, other_phone_x, places=5)
+
+        long_number = "1-800-555-12345"
+        clamped = _phone_letter_x(long_number, phone_x, main_text_x, 7, tw, "wk")
+        self.assertLessEqual(clamped + tw("wk", 7) + space, main_text_x + 0.01)
+        self.assertLess(clamped, phone_x + tw(long_number, 7) + space)
+
+    def test_pdf_phone_letter_gap_is_one_space_and_names_align(self) -> None:
+        family = "Verdana" if resolve_pdf_font_path("Verdana", "regular") else "Arial"
+        tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(tempdir.name) / "app.sqlite3")
+        initialize_database()
+        try:
+            pdf = self._phone_gap_pdf(family)
+        finally:
+            set_request_db_path(None)
+            tempdir.cleanup()
+        self._assert_phone_gap_pdf(pdf, family)
+
+    def _phone_gap_pdf(self, family: str) -> bytes:
+        return build_address_book_pdf(
+            fields=[
+                {
+                    "name": "Field A",
+                    "meetings": [
+                        {
+                            "name": "Meeting 1",
+                            "contacts": [
+                                {
+                                    "name": "ADAMS, Ann",
+                                    "phones": [{"value": "7049656271", "code": "M"}],
+                                    "addresses": [],
+                                    "children": [],
+                                    "other_relationships": [],
+                                },
+                                {
+                                    "name": "BAKER, Ben",
+                                    "phones": [{"value": "3363820709", "code": "S"}],
+                                    "addresses": [],
+                                    "children": [],
+                                    "other_relationships": [],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+            meeting_preview_sections=[],
+            settings={
+                "address_map_provider": "google",
+                "address_align": "right",
+                "include_bible_study_union_info": 0,
+                "meeting_page_mode": "one_meeting",
+            },
+            layout={
+                "trim_width_in": 3.5,
+                "trim_height_in": 5.5,
+                "margin_left_in": 0.14,
+                "margin_right_in": 0.14,
+                "margin_top_in": 0.14,
+                "margin_bottom_in": 0.14,
+                "base_font_size_pt": 7,
+                "line_height": 1.2,
+                "font_family": family,
+                "book_title": "Phone Gap Book",
+            },
+            print_order_mode="alphabetical",
+            print_order_json="",
+        )
+
+    def _assert_phone_gap_pdf(self, pdf: bytes, family: str) -> None:
+        document = fitz.open(stream=pdf, filetype="pdf")
+        try:
+            page = next(item for item in document if "ADAMS" in item.get_text() and "BAKER" in item.get_text())
+            spans = [
+                span
+                for block in page.get_text("dict").get("blocks", [])
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+                if str(span.get("text") or "")
+            ]
+        finally:
+            document.close()
+
+        def _span(text: str):
+            return next(span for span in spans if span["text"] == text)
+
+        adams = _span("ADAMS")
+        baker = _span("BAKER")
+        self.assertAlmostEqual(adams["bbox"][0], baker["bbox"][0], places=1)
+
+        def tw(text: str, size: float) -> float:
+            return _text_width(text, size, family)
+
+        _phone_x, _legacy_x, main_text_x, _cont_x, _name_max = _contact_text_columns(
+            0.14 * 72, 3.5 * 72, 0.14 * 72, 7, tw
+        )
+        self.assertAlmostEqual(adams["bbox"][0], main_text_x, places=1)
+
+        phone_span = next(span for span in spans if "704-965-6271" in span["text"])
+        space = tw(" ", 7)
+        old_tab_gap = _legacy_x - (_phone_x + tw("704-965-6271", 7))
+        if phone_span["text"] == "704-965-6271 M":
+            drawn_width = phone_span["bbox"][2] - phone_span["bbox"][0]
+            self.assertAlmostEqual(drawn_width, tw("704-965-6271 M", 7), places=1)
+            self.assertLess(drawn_width + 1.0, (_legacy_x - _phone_x) + tw("M", 7))
+        else:
+            letter_span = next(span for span in spans if span["text"] == "M")
+            gap = letter_span["bbox"][0] - phone_span["bbox"][2]
+            self.assertGreater(gap, space * 0.4)
+            self.assertLess(gap, space * 1.8)
+            self.assertLess(gap, old_tab_gap)
 
     def test_toc_uses_chosen_title_and_entry_font_sizes(self) -> None:
         pages = _build_toc_pages(

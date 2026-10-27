@@ -8,20 +8,32 @@
   {% set row_colors = row_colors|default({"title_bar": "#e3eff3"}) %}
   {% set current_field_value = contact.fields_list[0] if contact.fields_list else (contact.fields_text or "") %}
   {% set current_meeting_value = contact.meetings_list[0] if contact.meetings_list else (contact.meetings_text or "") %}
-  {% set phone_label_options = ["Mobile", "Home", "Work", "Nursing Home", "Custom"] %}
+  {% set phone_label_options = ["Blank", "Mobile", "Home", "Work", "Nursing Home", "Custom"] %}
   {% set email_label_options = ["Home", "Work", "School", "Other", "Custom"] %}
   {% set address_label_options = ["Home", "Work", "Mail", "NH", "Custom"] %}
   {% set relationship_label_options = ["Husband", "Wife", "Child", "Father", "Mother", "Brother", "Sister", "Friend", "Relative", "Partner", "Custom"] %}
-  {% macro label_select(name, options, value="") -%}
+  {% macro is_blank_phone_label(phone_type="") -%}
+    {%- set current = (phone_type or "")|lower -%}
+    {{- "1" if current in ["", "blank", "__blank__", "no label"] else "" -}}
+  {%- endmacro %}
+  {% macro phone_value_heading(phone_type="") -%}
+    {{- "Text for phone column" if is_blank_phone_label(phone_type) else "Phone" -}}
+  {%- endmacro %}
+  {% macro label_select(name, options, value="", extra="") -%}
     {% set current_value = value or "" %}
     {% if name == "phone_type" and current_value|lower == "nh" %}
       {% set current_value = "Nursing Home" %}
+    {% elif name == "phone_type" and current_value|lower in ["", "blank", "__blank__", "no label"] %}
+      {% set current_value = "Blank" %}
     {% endif %}
     {% set is_custom_value = current_value and current_value not in options %}
+    {% set is_blank_value = name == "phone_type" and current_value == "Blank" %}
     <div class="contact-edit-type-control" data-contact-type-control>
       <input type="hidden" name="{{ name }}" value="{{ current_value }}" data-contact-type-hidden>
       <select data-contact-type-select>
-        <option value=""></option>
+        {% if name != "phone_type" %}
+          <option value=""></option>
+        {% endif %}
         {% for option in options %}
           <option value="{{ option }}" {% if current_value == option or (option == "Custom" and is_custom_value) %}selected{% endif %}>{{ option }}</option>
         {% endfor %}
@@ -35,6 +47,18 @@
         data-contact-type-custom
         {% if not is_custom_value %}hidden{% endif %}
       >
+      {% if name == "phone_type" %}
+        <input
+          type="text"
+          class="contact-edit-custom-type-input"
+          name="phone_code"
+          value="{{ extra or '' }}"
+          placeholder="Letter / code"
+          autocomplete="off"
+          data-contact-type-blank-code
+          {% if not is_blank_value %}hidden{% endif %}
+        >
+      {% endif %}
     </div>
   {%- endmacro %}
   <form method="post" action="{% if is_new_contact %}/contacts/new{% else %}/contacts/{{ contact.id }}/edit{% endif %}" class="contact-edit-form" enctype="multipart/form-data">
@@ -216,12 +240,12 @@
               {% for item in contact.phones %}
                 <div class="contact-edit-row">
                   <label>
-                    <span>Phone</span>
-                    <input type="text" name="phone_value" value="{{ item.phone_value or '' }}">
+                    <span data-phone-value-heading>{{ phone_value_heading(item.phone_type) }}</span>
+                    <input type="text" name="phone_value" value="{% if is_blank_phone_label(item.phone_type) %}{{ (item.phone_value or '')[:12] }}{% else %}{{ item.phone_value or '' }}{% endif %}"{% if is_blank_phone_label(item.phone_type) %} maxlength="12"{% endif %}>
                   </label>
                   <label>
                     <span>Label</span>
-                    {{ label_select("phone_type", phone_label_options, item.phone_type) }}
+                    {{ label_select("phone_type", phone_label_options, item.phone_type, item.phone_code) }}
                   </label>
                   <button type="button" class="contact-edit-remove" data-remove-row>Remove</button>
                 </div>
@@ -229,8 +253,8 @@
             {% else %}
               <div class="contact-edit-row">
                 <label>
-                  <span>Phone</span>
-                  <input type="text" name="phone_value" value="">
+                  <span data-phone-value-heading>{{ phone_value_heading() }}</span>
+                  <input type="text" name="phone_value" value="" maxlength="12">
                 </label>
                 <label>
                   <span>Label</span>
@@ -589,8 +613,8 @@
   <template id="contact-edit-template-phones">
     <div class="contact-edit-row">
       <label>
-        <span>Phone</span>
-        <input type="text" name="phone_value" value="">
+        <span data-phone-value-heading>{{ phone_value_heading() }}</span>
+        <input type="text" name="phone_value" value="" maxlength="12">
       </label>
       <label>
         <span>Label</span>
@@ -1494,11 +1518,25 @@
       const syncTypeControl = (control) => {
         const select = control?.querySelector("[data-contact-type-select]");
         const customInput = control?.querySelector("[data-contact-type-custom]");
+        const blankCodeInput = control?.querySelector("[data-contact-type-blank-code]");
         const hiddenInput = control?.querySelector("[data-contact-type-hidden]");
         if (!select || !customInput || !hiddenInput) return;
         const isCustom = select.value === "Custom";
+        const isBlank = select.value === "Blank";
         customInput.hidden = !isCustom;
+        if (blankCodeInput) blankCodeInput.hidden = !isBlank;
         hiddenInput.value = isCustom ? (customInput.value.trim() || "Custom") : select.value;
+        const heading = control.closest(".contact-edit-row")?.querySelector("[data-phone-value-heading]");
+        if (heading) heading.textContent = isBlank ? "Text for phone column" : "Phone";
+        const phoneInput = control.closest(".contact-edit-row")?.querySelector('input[name="phone_value"]');
+        if (phoneInput) {
+          if (isBlank) {
+            phoneInput.maxLength = 12;
+            if (phoneInput.value.length > 12) phoneInput.value = phoneInput.value.slice(0, 12);
+          } else {
+            phoneInput.removeAttribute("maxlength");
+          }
+        }
       };
 
       const bindTypeControl = (control) => {
@@ -1506,10 +1544,13 @@
         control.dataset.contactTypeBound = "true";
         const select = control.querySelector("[data-contact-type-select]");
         const customInput = control.querySelector("[data-contact-type-custom]");
+        const blankCodeInput = control.querySelector("[data-contact-type-blank-code]");
         select?.addEventListener("change", () => {
           syncTypeControl(control);
           if (select.value === "Custom") {
             customInput?.focus();
+          } else if (select.value === "Blank") {
+            blankCodeInput?.focus();
           }
         });
         customInput?.addEventListener("input", () => syncTypeControl(control));
