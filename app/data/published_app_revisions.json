@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.248",
+      "version": "1.249",
+      "date_display": "10/28/2026",
+      "description": "Custom phone codes like B# keep a space after the number and print in full on continuation lines, and text phones with empty Custom labels omit the word Custom."
+    },
+    {
       "date_display": "10/27/2026",
+      "version": "1.248",
       "description": "Italic MeetingData text now prints on the book PDF and paper, matching Meeting Print preview."
     },
     {
