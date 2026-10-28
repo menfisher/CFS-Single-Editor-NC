@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.249",
+      "version": "1.250",
       "date_display": "10/28/2026",
+      "description": "Print new page only appears on Field-list table-start rows, and the Order/Kind toolbar is tighter to read."
+    },
+    {
+      "date_display": "10/28/2026",
+      "version": "1.249",
       "description": "Custom phone codes like B# keep a space after the number and print in full on continuation lines, and text phones with empty Custom labels omit the word Custom."
     },
     {
