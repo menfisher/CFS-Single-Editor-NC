@@ -1198,9 +1198,26 @@ function updateAddressBookPdfCoverCanvas() {
   syncAddressBookPdfPreviewHeight();
 }
 
+function addressBookPdfIsGenericCustomLabel(value) {
+  return String(value || "").trim().toLowerCase() === "custom";
+}
+
+function addressBookPdfPhoneCode(phone, index) {
+  const customLabel = addressBookPdfIsGenericCustomLabel(phone?.custom_label)
+    ? ""
+    : String(phone?.custom_label || "").trim();
+  const code = addressBookPdfIsGenericCustomLabel(phone?.code)
+    ? ""
+    : String(phone?.code || "").trim();
+  const phoneType = String(phone?.type || "").trim();
+  if (addressBookPdfIsGenericCustomLabel(phoneType) && !customLabel) return "";
+  const phoneCode = index > 0 ? (customLabel || code) : (code || customLabel);
+  return addressBookPdfIsGenericCustomLabel(phoneCode) ? "" : phoneCode;
+}
+
 function renderAddressBookPdfPhoneLineHtml(phone, index) {
-  const useFullPhoneLabel = index > 0 && phone.custom_label;
-  const phoneCode = useFullPhoneLabel ? phone.custom_label : (phone.code || "");
+  const phoneCode = addressBookPdfPhoneCode(phone, index);
+  const useFullPhoneLabel = index > 0 && Boolean(phoneCode);
   return `
     <div class="address-book-pdf-phone-line ${index === 0 ? "is-primary-phone" : "is-secondary-phone"}">
       <span class="address-book-pdf-phone-value">${phoneNumberHtmlForAddressBookPdf(phone.value || "", phone.type || "")}</span>

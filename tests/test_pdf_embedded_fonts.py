@@ -14,6 +14,7 @@ from app.services.address_book_pdf_service import (
     _build_toc_pages,
     _center_text_x,
     _contact_text_columns,
+    _phone_code_for_line,
     _phone_display_text,
     _phone_letter_x,
     _phone_name_x,
@@ -90,21 +91,21 @@ class PdfEmbeddedFontTests(unittest.TestCase):
         self.assertLess(main_text_x - phone_x, ch * 16)
 
         phone = _phone_display_text("704-965-6271")
-        letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "Le")
-        desired_letter = phone_x + tw(phone, 7) + space
-        self.assertLess(abs(letter_x - desired_letter), space * 0.6)
-        self.assertLess(letter_x - (phone_x + tw(phone, 7)), space * 1.15)
-        self.assertLess(letter_x, phone_x + (ch * 13) - space)
+        number_end = phone_x + tw(phone, 7)
+        desired_letter = number_end + space
+        name_xs = []
+        for code in ("B", "c", "T", "Le", "B#"):
+            letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, code)
+            self.assertAlmostEqual(letter_x, desired_letter, places=5)
+            self.assertAlmostEqual(letter_x - number_end, space, places=5)
+            self.assertLess(letter_x, phone_x + (ch * 13) - space)
+            name_x = _phone_name_x(letter_x, code, 7, tw, main_text_x)
+            self.assertAlmostEqual(name_x, main_text_x, places=5)
+            name_xs.append(name_x)
+        self.assertEqual(len(set(round(value, 5) for value in name_xs)), 1)
 
-        name_x = _phone_name_x(letter_x, "Sh", 7, tw, main_text_x)
-        self.assertAlmostEqual(name_x, letter_x + slot + space, places=5)
-        one_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "c")
-        one_name_x = _phone_name_x(one_letter_x, "c", 7, tw, main_text_x)
-        self.assertAlmostEqual(one_name_x, name_x, places=5)
-
-        two_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "Le")
-        two_name_x = _phone_name_x(two_letter_x, "Le", 7, tw, main_text_x)
-        self.assertAlmostEqual(two_name_x, name_x, places=5)
+        name_x = _phone_name_x(desired_letter, "Sh", 7, tw, main_text_x)
+        self.assertAlmostEqual(name_x, desired_letter + slot + space, places=5)
 
         other_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "Sh")
         other_name_x = _phone_name_x(other_letter_x, "Sh", 7, tw, main_text_x)
@@ -222,7 +223,7 @@ class PdfEmbeddedFontTests(unittest.TestCase):
             number_gap = letter_span["bbox"][0] - phone_span["bbox"][2]
             self.assertGreater(number_gap, space * 0.4)
             self.assertLess(number_gap, space * 1.8)
-            self.assertLess(number_gap, old_tab_gap)
+            self.assertAlmostEqual(number_gap, old_tab_gap, delta=0.05)
             name_gap = thain["bbox"][0] - letter_span["bbox"][2]
             self.assertGreater(name_gap, space * 0.4)
             self.assertLess(name_gap, space * 1.8)
@@ -342,6 +343,326 @@ class PdfEmbeddedFontTests(unittest.TestCase):
             number_gap = letter_span["bbox"][0] - phone_span["bbox"][2]
             self.assertGreater(number_gap, space * 0.4)
             self.assertLess(number_gap, space * 1.8)
+
+    def test_custom_phone_code_keeps_space_after_number(self) -> None:
+        family = "Verdana" if resolve_pdf_font_path("Verdana", "regular") else "Arial"
+        tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(tempdir.name) / "app.sqlite3")
+        initialize_database()
+        try:
+            pdf = build_address_book_pdf(
+                fields=[
+                    {
+                        "name": "Field A",
+                        "meetings": [
+                            {
+                                "name": "Meeting 1",
+                                "contacts": [
+                                    {
+                                        "name": "ARROW, Ann",
+                                        "phones": [
+                                            {
+                                                "value": "7044778603",
+                                                "code": "B",
+                                                "type": "B",
+                                                "custom_label": "B",
+                                            },
+                                            {
+                                                "value": "7044771359",
+                                                "code": "B",
+                                                "type": "B#",
+                                                "custom_label": "B#",
+                                            },
+                                        ],
+                                        "addresses": [
+                                            {
+                                                "street_address": "444 E Davidson St",
+                                                "city": "Shelby",
+                                                "region": "NC",
+                                                "postal_code": "28150",
+                                            }
+                                        ],
+                                        "children": [],
+                                        "other_relationships": [],
+                                    },
+                                    {
+                                        "name": "SUMMEY, Leonard",
+                                        "phones": [{"value": "3368348053", "code": "Le"}],
+                                        "addresses": [],
+                                        "children": [],
+                                        "other_relationships": [],
+                                    },
+                                    {
+                                        "name": "NICHOLS, Maryann",
+                                        "phones": [
+                                            {
+                                                "value": "3362018200",
+                                                "code": "B#",
+                                                "type": "Blank",
+                                                "phone_code": "B#",
+                                            }
+                                        ],
+                                        "addresses": [],
+                                        "children": [],
+                                        "other_relationships": [],
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ],
+                meeting_preview_sections=[],
+                settings={
+                    "address_map_provider": "google",
+                    "address_align": "left",
+                    "include_bible_study_union_info": 0,
+                    "meeting_page_mode": "one_meeting",
+                },
+                layout={
+                    "trim_width_in": 3.5,
+                    "trim_height_in": 5.5,
+                    "margin_left_in": 0.14,
+                    "margin_right_in": 0.14,
+                    "margin_top_in": 0.14,
+                    "margin_bottom_in": 0.14,
+                    "base_font_size_pt": 7,
+                    "line_height": 1.2,
+                    "font_family": family,
+                    "book_title": "Custom Code Gap Book",
+                },
+                print_order_mode="default",
+                print_order_json="",
+            )
+        finally:
+            set_request_db_path(None)
+            tempdir.cleanup()
+
+        document = fitz.open(stream=pdf, filetype="pdf")
+        try:
+            page = next(
+                item
+                for item in document
+                if "ARROW" in item.get_text() and "SUMMEY" in item.get_text() and "B#" in item.get_text()
+            )
+            spans = [
+                span
+                for block in page.get_text("dict").get("blocks", [])
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+                if str(span.get("text") or "")
+            ]
+        finally:
+            document.close()
+
+        def _span(text: str):
+            return next(span for span in spans if span["text"] == text)
+
+        def tw(text: str, size: float) -> float:
+            return _text_width(text, size, family)
+
+        space = tw(" ", 7)
+        arrow = _span("ARROW")
+        summey = _span("SUMMEY")
+        nichols = _span("NICHOLS")
+        self.assertAlmostEqual(arrow["bbox"][0], summey["bbox"][0], places=1)
+        self.assertAlmostEqual(summey["bbox"][0], nichols["bbox"][0], places=1)
+
+        def number_to_letter_gap(last4: str, code: str) -> float:
+            digit_span = next(
+                span for span in spans if last4 in span["text"] and "-" in span["text"]
+            )
+            letter_span = next(
+                span
+                for span in spans
+                if span["text"] == code
+                and abs(span["bbox"][1] - digit_span["bbox"][1]) < 2
+            )
+            return letter_span["bbox"][0] - digit_span["bbox"][2]
+
+        for last4, code in (("8603", "B"), ("1359", "B#"), ("8053", "Le"), ("8200", "B#")):
+            gap = number_to_letter_gap(last4, code)
+            self.assertGreater(gap, space * 0.85, msg=f"{code} after {last4}")
+            self.assertLess(gap, space * 1.2, msg=f"{code} after {last4}")
+
+    def test_phone_code_for_line_prints_full_hash_on_continuation(self) -> None:
+        truncated = {
+            "value": "7044771359",
+            "code": "B",
+            "type": "B#",
+            "custom_label": "B#",
+        }
+        self.assertEqual(_phone_code_for_line(truncated, continuation=False), "B")
+        self.assertEqual(_phone_code_for_line(truncated, continuation=True), "B#")
+        household_b = {"value": "7044778603", "code": "B", "type": "B", "custom_label": "B"}
+        self.assertEqual(_phone_code_for_line(household_b, continuation=False), "B")
+        self.assertEqual(_phone_code_for_line(household_b, continuation=True), "B")
+
+    def test_phone_code_for_line_skips_generic_custom_on_text_phones(self) -> None:
+        text_phone = {
+            "value": "# for texting",
+            "code": "Cu",
+            "type": "Custom",
+            "custom_label": "Custom",
+        }
+        self.assertEqual(_phone_code_for_line(text_phone, continuation=False), "")
+        self.assertEqual(_phone_code_for_line(text_phone, continuation=True), "")
+        numeric_empty = {
+            "value": "7044771359",
+            "code": "Cu",
+            "type": "Custom",
+            "custom_label": "Custom",
+        }
+        self.assertEqual(_phone_code_for_line(numeric_empty, continuation=True), "")
+
+    def _arrowood_print_pdf(self, family: str) -> bytes:
+        return build_address_book_pdf(
+            fields=[
+                {
+                    "name": "Field A",
+                    "meetings": [
+                        {
+                            "name": "Meeting 1",
+                            "contacts": [
+                                {
+                                    "name": "ARROWOOD, Ann",
+                                    "phones": [
+                                        {
+                                            "value": "7044778603",
+                                            "code": "B",
+                                            "type": "B",
+                                            "custom_label": "B",
+                                        },
+                                        {
+                                            "value": "7044771359",
+                                            "code": "B",
+                                            "type": "B#",
+                                            "custom_label": "B#",
+                                        },
+                                        {
+                                            "value": "# for texting",
+                                            "code": "Cu",
+                                            "type": "Custom",
+                                            "custom_label": "Custom",
+                                        },
+                                    ],
+                                    "addresses": [
+                                        {
+                                            "street_address": "444 E Davidson St",
+                                            "city": "Lawndale",
+                                            "region": "NC",
+                                            "postal_code": "28090",
+                                        }
+                                    ],
+                                    "children": [],
+                                    "other_relationships": [],
+                                },
+                                {
+                                    "name": "SUMMEY, Leonard",
+                                    "phones": [{"value": "3368348053", "code": "Le"}],
+                                    "addresses": [],
+                                    "children": [],
+                                    "other_relationships": [],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+            meeting_preview_sections=[],
+            settings={
+                "address_map_provider": "google",
+                "address_align": "left",
+                "include_bible_study_union_info": 0,
+                "meeting_page_mode": "one_meeting",
+            },
+            layout={
+                "trim_width_in": 3.5,
+                "trim_height_in": 5.5,
+                "margin_left_in": 0.14,
+                "margin_right_in": 0.14,
+                "margin_top_in": 0.14,
+                "margin_bottom_in": 0.14,
+                "base_font_size_pt": 7,
+                "line_height": 1.2,
+                "font_family": family,
+                "book_title": "Arrowood Print Book",
+            },
+            print_order_mode="default",
+            print_order_json="",
+        )
+
+    def _pdf_spans(self, pdf: bytes):
+        document = fitz.open(stream=pdf, filetype="pdf")
+        try:
+            page = next(
+                item
+                for item in document
+                if "ARROWOOD" in item.get_text() and "SUMMEY" in item.get_text()
+            )
+            text = page.get_text()
+            spans = [
+                span
+                for block in page.get_text("dict").get("blocks", [])
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+                if str(span.get("text") or "")
+            ]
+            return text, spans
+        finally:
+            document.close()
+
+    def test_continuation_line_prints_full_custom_b_hash(self) -> None:
+        family = "Verdana" if resolve_pdf_font_path("Verdana", "regular") else "Arial"
+        tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(tempdir.name) / "app.sqlite3")
+        initialize_database()
+        try:
+            pdf = self._arrowood_print_pdf(family)
+        finally:
+            set_request_db_path(None)
+            tempdir.cleanup()
+
+        text, spans = self._pdf_spans(pdf)
+
+        def _span(value: str):
+            return next(span for span in spans if span["text"] == value)
+
+        def tw(value: str, size: float) -> float:
+            return _text_width(value, size, family)
+
+        space = tw(" ", 7)
+        self.assertAlmostEqual(_span("ARROWOOD")["bbox"][0], _span("SUMMEY")["bbox"][0], places=1)
+        self.assertIn("B#", text)
+        digit_span = next(span for span in spans if "1359" in span["text"] and "-" in span["text"])
+        letter_span = next(
+            span
+            for span in spans
+            if span["text"] == "B#" and abs(span["bbox"][1] - digit_span["bbox"][1]) < 2
+        )
+        gap = letter_span["bbox"][0] - digit_span["bbox"][2]
+        self.assertGreater(gap, space * 0.85)
+        self.assertLess(gap, space * 1.2)
+        self.assertEqual(letter_span["text"], "B#")
+        address = next(span for span in spans if "444" in (span.get("text") or ""))
+        self.assertGreater(address["bbox"][0], letter_span["bbox"][0] + tw("B", 7))
+
+    def test_text_phone_with_empty_custom_label_does_not_print_custom(self) -> None:
+        family = "Verdana" if resolve_pdf_font_path("Verdana", "regular") else "Arial"
+        tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(tempdir.name) / "app.sqlite3")
+        initialize_database()
+        try:
+            pdf = self._arrowood_print_pdf(family)
+        finally:
+            set_request_db_path(None)
+            tempdir.cleanup()
+
+        text, spans = self._pdf_spans(pdf)
+        self.assertIn("# for texting", text)
+        self.assertIn("Lawndale", text)
+        self.assertNotIn("Custom", text)
+        self.assertNotIn("Cu", [span["text"] for span in spans])
+        self.assertTrue(any("# for texting" in span["text"] for span in spans))
 
     def test_toc_uses_chosen_title_and_entry_font_sizes(self) -> None:
         pages = _build_toc_pages(

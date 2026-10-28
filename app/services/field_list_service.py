@@ -684,6 +684,16 @@ def _is_blank_phone_type(phone_type: object) -> bool:
     return _normalize_phone_type(phone_type) in {"", "blank", "no label"}
 
 
+def _is_generic_custom_phone_type(phone_type: object) -> bool:
+    """True when Label is Custom and the custom-label box was left empty."""
+    return _normalize_phone_type(phone_type) == "custom"
+
+
+def _phone_code_compact(value: object) -> str:
+    """Keep letters, digits, and code punctuation such as ``#`` in ``B#``."""
+    return re.sub(r"[^A-Za-z0-9#*+]+", "", _clean(value))
+
+
 def _clip_blank_phone_column_text(value: object) -> str:
     from app.services.address_book_pdf_service import _clip_to_phone_column_width, _text_width
 
@@ -849,12 +859,19 @@ def _is_mobile_phone_type(phone_type: object) -> bool:
 
 
 def _format_raw_phone_type_code(label: object) -> str:
-    letters = _phone_label_letters(label)
-    if not letters:
+    if _is_generic_custom_phone_type(label):
         return ""
-    if len(letters) == 1:
-        return letters.upper()
-    return letters[:1].upper() + letters[1:2].lower()
+    compact = _phone_code_compact(label)
+    if not compact:
+        return ""
+    if len(compact) == 1:
+        return compact.upper() if compact.isalpha() else compact
+    first, second = compact[0], compact[1]
+    if first.isalpha():
+        first = first.upper()
+    if second.isalpha():
+        second = second.lower()
+    return first + second
 
 
 def _phone_code_person_label(
@@ -951,6 +968,11 @@ def _phone_code_conflict_labels(
 
 
 def _format_custom_phone_code(label: object, all_custom_labels: list[str], is_first_phone: bool, uppercase: bool = False) -> str:
+    if _is_generic_custom_phone_type(label):
+        return ""
+    compact = _phone_code_compact(label)
+    if re.search(r"[#*+]", compact):
+        return _format_raw_phone_type_code(label)
     letters = _phone_label_letters(label)
     if not letters:
         return ""
@@ -1030,6 +1052,8 @@ def _format_contact_phones(contact: dict[str, Any]) -> list[dict[str, str]]:
                 code = "wk"
         elif known_code is not None:
             code = known_code
+        elif _is_generic_custom_phone_type(phone_type):
+            code = ""
         elif has_household_people:
             label = _phone_code_label_for_contact(
                 contact,
@@ -1041,7 +1065,11 @@ def _format_contact_phones(contact: dict[str, Any]) -> list[dict[str, str]]:
         else:
             code = ""
         custom_label = ""
-        if is_custom_type and not _phone_type_matches_name_line(phone_type_value, contact):
+        if (
+            is_custom_type
+            and not _is_generic_custom_phone_type(phone_type)
+            and not _phone_type_matches_name_line(phone_type_value, contact)
+        ):
             custom_label = phone_type_value
         formatted.append(
             {
@@ -3181,7 +3209,9 @@ def _field_list_print_phone_line_html(phone: dict[str, Any], index: int) -> str:
     value = _clean(phone.get("value"))
     if not value:
         return ""
-    code = _clean(phone.get("code"))
+    from app.services.address_book_pdf_service import _phone_code_for_line
+
+    code = _phone_code_for_line(phone, continuation=index > 0)
     row_class = "is-primary-phone" if index == 0 else "is-secondary-phone"
     return (
         f'<div class="print-field-list-phone-line {row_class}">'
@@ -3267,6 +3297,8 @@ def _field_list_print_note_lines_html(contact: dict[str, Any], settings: dict[st
 
 
 def _field_list_print_contact_html(contact: dict[str, Any], settings: dict[str, Any], compact_address: bool = False) -> str:
+    from app.services.address_book_pdf_service import _phone_code_for_line, _text_width as _pdf_text_width
+
     raw_phones = [phone for phone in list(contact.get("phones") or []) if _clean(phone.get("value"))]
     phone_lines = []
     if compact_address and len(raw_phones) >= 3:
@@ -3280,7 +3312,7 @@ def _field_list_print_contact_html(contact: dict[str, Any], settings: dict[str, 
             combined_phone_html.append(
                 '<span class="print-field-list-phone-pair">'
                 f'<span class="print-field-list-phone-value">{_print_escape(_clean(phone.get("value")))}</span>'
-                f'<span class="print-field-list-phone-code">{_print_escape(_clean(phone.get("code")))}</span>'
+                f'<span class="print-field-list-phone-code">{_print_escape(_phone_code_for_line(phone, continuation=True))}</span>'
                 "</span>"
             )
         phone_lines.append(
@@ -3292,7 +3324,6 @@ def _field_list_print_contact_html(contact: dict[str, Any], settings: dict[str, 
         for index, phone in enumerate(raw_phones):
             phone_lines.append(_field_list_print_phone_line_html(phone, index))
     phone_lines = [line for line in phone_lines if line]
-    from app.services.address_book_pdf_service import _text_width as _pdf_text_width
 
     address_font_size = float(settings.get("base_font_size_pt") or 10.0)
     address_font_family = str(settings.get("font_family") or "Arial")
@@ -4380,6 +4411,8 @@ main {{
 .print-field-list-phone-line.is-secondary-phone .print-field-list-phone-code {{
   max-width: none;
   overflow: visible;
+  position: relative;
+  z-index: 1;
 }}
 .print-field-list-phone-line.is-combined-phone-line {{
   display: flex;

@@ -928,10 +928,18 @@ window.addEventListener("DOMContentLoaded", () => {
     const printAfterHtml = renderPrintAfterAddressHtml(contact);
     const compactAddressLines = getCompactAddressLines(contact);
     const addressLines = getContactAddressLines(contact);
+    const phoneCodeForLine = (phone, index = 0) => {
+      const isGenericCustom = (value) => String(value || "").trim().toLowerCase() === "custom";
+      const customLabel = isGenericCustom(phone?.custom_label) ? "" : String(phone?.custom_label || "").trim();
+      const code = isGenericCustom(phone?.code) ? "" : String(phone?.code || "").trim();
+      if (isGenericCustom(phone?.type) && !customLabel) return "";
+      const phoneCode = index > 0 ? (customLabel || code) : (code || customLabel);
+      return isGenericCustom(phoneCode) ? "" : phoneCode;
+    };
     const phoneLineHtml = (phone, index = 0) => `
       <div class="field-list-phone-line ${index === 0 ? "is-primary-phone" : "is-secondary-phone"}">
         <span class="field-list-phone-value">${escapeHtml(phone?.value || "")}</span>
-        <span class="field-list-phone-code">${escapeHtml(phone?.code || "")}</span>
+        <span class="field-list-phone-code">${escapeHtml(phoneCodeForLine(phone, index))}</span>
       </div>
     `;
     const compactPhoneStackHtml = () => {
@@ -944,7 +952,7 @@ window.addEventListener("DOMContentLoaded", () => {
             ${index === 1 ? `<span class="field-list-phone-continuation-gap"></span>` : index > 1 ? `<span class="field-list-phone-comma">,</span>` : ""}
             <span class="field-list-phone-pair">
               <span class="field-list-phone-value">${escapeHtml(phone?.value || "")}</span>
-              <span class="field-list-phone-code">${escapeHtml(phone?.code || "")}</span>
+              <span class="field-list-phone-code">${escapeHtml(phoneCodeForLine(phone, index + 1))}</span>
             </span>
           `).join("")}
         </div>`,

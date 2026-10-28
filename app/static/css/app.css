@@ -360,6 +360,7 @@
   column-gap: 1ch;
   align-items: start;
   min-width: 0;
+  overflow: visible;
 }
 
 .address-book-pdf-contact-line:has(.address-book-pdf-phone-spacer) {
@@ -430,6 +431,8 @@
 .address-book-pdf-phone-code.is-full-phone-label {
   max-width: none;
   overflow: visible;
+  position: relative;
+  z-index: 1;
 }
 
 .address-book-pdf-contact-main {
@@ -7726,6 +7729,8 @@ button.site-nav-dropdown-item:hover {
 .field-list-phone-line.is-secondary-phone .field-list-phone-code {
   max-width: none;
   overflow: visible;
+  position: relative;
+  z-index: 1;
 }
 
 .field-list-phone-line.is-combined-phone-line {

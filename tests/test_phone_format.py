@@ -10,7 +10,9 @@ from app.services.contact_service import create_contact, get_contact_detail
 from app.services.field_list_service import (
     _field_list_contact_payload,
     _format_contact_phones,
+    _format_raw_phone_type_code,
     _is_blank_phone_type,
+    _is_generic_custom_phone_type,
     _known_phone_code,
     _order_household_phones,
 )
@@ -90,6 +92,48 @@ class BlankPhoneLabelTests(unittest.TestCase):
         self.assertEqual(phones[0]["value"], "# for texting")
         self.assertEqual(phones[1]["value"], "000000000000")
         self.assertEqual(phones[2]["value"], "704-965-6271 x999")
+
+
+class CustomPhoneCodeTests(unittest.TestCase):
+    def test_raw_codes_keep_hash_and_skip_generic_custom(self) -> None:
+        self.assertTrue(_is_generic_custom_phone_type("Custom"))
+        self.assertFalse(_is_generic_custom_phone_type("B"))
+        self.assertFalse(_is_generic_custom_phone_type("B#"))
+        self.assertEqual(_format_raw_phone_type_code("B"), "B")
+        self.assertEqual(_format_raw_phone_type_code("B#"), "B#")
+        self.assertEqual(_format_raw_phone_type_code("Custom"), "")
+        self.assertEqual(_format_raw_phone_type_code("Grandma"), "Gr")
+
+    def test_custom_b_hash_keeps_punctuation_in_code(self) -> None:
+        phones = _format_contact_phones(
+            {
+                "given_name": "Ann",
+                "name": "ARROWOOD, Ann",
+                "phones": [
+                    {"phone_type": "B", "phone_value": "704-477-8603"},
+                    {"phone_type": "B#", "phone_value": "704-477-1359"},
+                    {"phone_type": "Custom", "phone_value": "# for texting"},
+                ],
+            }
+        )
+        self.assertEqual(phones[0]["code"], "B")
+        self.assertEqual(phones[1]["code"], "B#")
+        self.assertEqual(phones[1]["custom_label"], "B#")
+        self.assertEqual(phones[2]["value"], "# for texting")
+        self.assertEqual(phones[2]["code"], "")
+        self.assertEqual(phones[2]["custom_label"], "")
+
+    def test_empty_custom_label_is_not_a_letter_on_numeric_phones(self) -> None:
+        phones = _format_contact_phones(
+            {
+                "given_name": "Ann",
+                "phones": [
+                    {"phone_type": "Custom", "phone_value": "704-477-1359"},
+                ],
+            }
+        )
+        self.assertEqual(phones[0]["code"], "")
+        self.assertEqual(phones[0]["custom_label"], "")
 
 
 class PhonePrintOrderTests(unittest.TestCase):

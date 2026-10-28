@@ -930,13 +930,15 @@ def _phone_letter_x(
 ) -> float:
     """Place the phone letter after the drawn number plus one space.
 
-    main_text_x is the rightmost the first name may start. Clamp so a long
-    number or code still leaves room for wrapped names and addresses.
+    Regular letters (``B``, ``c``, ``Le``) and custom/Blank codes (``B#``)
+    all keep that space. Clamp using the reserved 2-character slot so a
+    wide custom code cannot slide left into the number; last names stay
+    at main_text_x.
     """
     space = tw(" ", font_size)
     desired = phone_x + tw(phone_text, font_size) + space
-    code_width = tw(code, font_size) if code else 0.0
-    max_x = main_text_x - space - code_width
+    code_slot = tw(PHONE_CODE_SLOT, font_size)
+    max_x = main_text_x - space - code_slot
     if max_x < phone_x:
         return phone_x
     return min(desired, max_x)
@@ -956,6 +958,70 @@ def _phone_name_x(
     if max_name_x is None:
         return desired
     return min(desired, max_name_x)
+
+
+def _is_numeric_phone_value(value: object) -> bool:
+    digits = _phone_digits(value)
+    return len(digits) == 10 or (len(digits) == 11 and digits.startswith("1"))
+
+
+def _is_generic_custom_phone_code(value: object) -> bool:
+    return _clean(value).casefold() == "custom"
+
+
+def _clip_phone_code_to_slot(code: str, font_size: float, tw) -> str:
+    """Keep the name-line letter from colliding with the last-name column.
+
+    Continuation lines skip this clip so a wide custom code such as ``B#``
+    still prints in full; there is room after the bold last-name line.
+    """
+    text = _clean(code)
+    if not text:
+        return ""
+    slot = tw(PHONE_CODE_SLOT, font_size)
+    space = tw(" ", font_size)
+    if tw(text, font_size) <= slot + space:
+        return text
+    trimmed = text
+    while trimmed and tw(trimmed, font_size) > slot:
+        trimmed = trimmed[:-1]
+    return trimmed
+
+
+def _phone_code_for_line(
+    phone_item: object,
+    *,
+    continuation: bool = False,
+    font_size: float | None = None,
+    tw=None,
+) -> str:
+    """Letter/code drawn beside a phone, or empty when it should not print.
+
+    Generic Label ``Custom`` (empty custom-label box) is never a book letter.
+    On the name line, a code wider than the 2-character slot is clipped so
+    last names stay aligned. On 2nd line and lower the full code is kept,
+    including custom ``B#``.
+    """
+    if not isinstance(phone_item, dict):
+        return _clean(phone_item)
+    custom_label = _clean(phone_item.get("custom_label"))
+    code = _clean(phone_item.get("code"))
+    phone_type = _clean(phone_item.get("type") or phone_item.get("phone_type"))
+    if _is_generic_custom_phone_code(custom_label):
+        custom_label = ""
+    if _is_generic_custom_phone_code(code):
+        code = ""
+    if _is_generic_custom_phone_code(phone_type) and not custom_label:
+        return ""
+    if continuation:
+        letter = custom_label or code
+    else:
+        letter = code or custom_label
+    if _is_generic_custom_phone_code(letter):
+        return ""
+    if not continuation and font_size is not None and tw is not None:
+        return _clip_phone_code_to_slot(letter, font_size, tw)
+    return letter
 
 
 def _text_width(
@@ -2972,7 +3038,7 @@ def build_address_book_pdf(
                     if index_name:
                         index_entries.append(_IndexEntry(name=index_name, page=page_number, target_y=min(page_height, y + (font_size * 2.4))))
 
-                    def draw_phone(phone_item: object, *, use_full_custom_label: bool = False) -> None:
+                    def draw_phone(phone_item: object, *, continuation: bool = False) -> None:
                         phone_value = _clean(phone_item.get("value") if isinstance(phone_item, dict) else phone_item)
                         digits = _phone_digits(phone_value)
                         display_text = _phone_display_text(phone_value)
@@ -2992,8 +3058,12 @@ def build_address_book_pdf(
                             page.lines.append(_PdfLine(text_text, phone_x + tw(f"{call_text}-", font_size), y, font_size, uri=last_uri, width=tw(text_text, font_size)))
                         else:
                             add_text(phone_value, phone_x)
-                        custom_label = _clean(phone_item.get("custom_label") if isinstance(phone_item, dict) else "")
-                        phone_code = custom_label if use_full_custom_label and custom_label else _clean(phone_item.get("code") if isinstance(phone_item, dict) else "")
+                        phone_code = _phone_code_for_line(
+                            phone_item,
+                            continuation=continuation,
+                            font_size=font_size,
+                            tw=tw,
+                        )
                         add_text(
                             phone_code,
                             _phone_letter_x(display_text, phone_x, main_text_x, font_size, tw, phone_code),
@@ -3004,7 +3074,7 @@ def build_address_book_pdf(
                         if index > 0:
                             y -= line_step
                         if index < len(phones):
-                            draw_phone(phones[index], use_full_custom_label=(index > 0))
+                            draw_phone(phones[index], continuation=(index > 0))
                             phones_drawn += 1
                         line_x = name_line_x if index == 0 else continuation_x
                         add_contact_name_line(line, line_x, bold_last_name=(index == 0))
@@ -3026,7 +3096,7 @@ def build_address_book_pdf(
                         ensure_space(1, field_name, heading)
                         phone_index = phones_drawn + line_index
                         if phone_index < len(phones):
-                            draw_phone(phones[phone_index], use_full_custom_label=True)
+                            draw_phone(phones[phone_index], continuation=True)
                         if line_index < len(below_lines):
                             kind, line, uri, has_coordinates = below_lines[line_index]
                             # Line up left-aligned addresses with wrapped children and pa/ notes.
