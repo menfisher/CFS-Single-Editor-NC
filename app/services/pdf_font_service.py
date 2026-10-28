@@ -14,36 +14,72 @@ _FONT_FILE_CANDIDATES = {
         "regular": ("Arial.ttf", "arial.ttf", "ARIAL.TTF"),
         "bold": ("Arial Bold.ttf", "arialbd.ttf", "Arial-Bold.ttf", "ARIALBD.TTF"),
         "italic": ("Arial Italic.ttf", "ariali.ttf", "Arial-Italic.ttf", "ARIALI.TTF"),
+        "bolditalic": (
+            "Arial Bold Italic.ttf",
+            "arialbi.ttf",
+            "Arial-BoldItalic.ttf",
+            "ARIALBI.TTF",
+        ),
     },
     "Helvetica": {
         "regular": ("Helvetica.ttf", "Helvetica.otf", "helvetica.ttf"),
         "bold": ("Helvetica Bold.ttf", "Helvetica-Bold.ttf", "helvetica-bold.ttf"),
         "italic": ("Helvetica Italic.ttf", "Helvetica-Oblique.ttf", "helvetica-oblique.ttf"),
+        "bolditalic": (
+            "Helvetica Bold Italic.ttf",
+            "Helvetica-BoldOblique.ttf",
+            "helvetica-boldoblique.ttf",
+        ),
     },
     "Verdana": {
         "regular": ("Verdana.ttf", "verdana.ttf", "VERDANA.TTF"),
         "bold": ("Verdana Bold.ttf", "verdanab.ttf", "Verdana-Bold.ttf", "VERDANAB.TTF"),
         "italic": ("Verdana Italic.ttf", "verdanai.ttf", "Verdana-Italic.ttf", "VERDANAI.TTF"),
+        "bolditalic": (
+            "Verdana Bold Italic.ttf",
+            "verdanaz.ttf",
+            "Verdana-BoldItalic.ttf",
+            "VERDANAZ.TTF",
+        ),
     },
     "Tahoma": {
         "regular": ("Tahoma.ttf", "tahoma.ttf", "TAHOMA.TTF"),
         "bold": ("Tahoma Bold.ttf", "tahomabd.ttf", "Tahoma-Bold.ttf", "TAHOMABD.TTF"),
         "italic": ("Tahoma Italic.ttf", "tahomai.ttf", "Tahoma-Italic.ttf"),
+        "bolditalic": ("Tahoma Bold Italic.ttf", "tahomabi.ttf", "Tahoma-BoldItalic.ttf"),
     },
     "Times New Roman": {
         "regular": ("Times New Roman.ttf", "times.ttf", "timesnr.ttf", "TIMES.TTF"),
         "bold": ("Times New Roman Bold.ttf", "timesbd.ttf", "Times New Roman-Bold.ttf", "TIMESBD.TTF"),
         "italic": ("Times New Roman Italic.ttf", "timesi.ttf", "Times New Roman-Italic.ttf", "TIMESI.TTF"),
+        "bolditalic": (
+            "Times New Roman Bold Italic.ttf",
+            "timesbi.ttf",
+            "Times New Roman-BoldItalic.ttf",
+            "TIMESBI.TTF",
+        ),
     },
     "Georgia": {
         "regular": ("Georgia.ttf", "georgia.ttf", "GEORGIA.TTF"),
         "bold": ("Georgia Bold.ttf", "georgiab.ttf", "Georgia-Bold.ttf", "GEORGIAB.TTF"),
         "italic": ("Georgia Italic.ttf", "georgiai.ttf", "Georgia-Italic.ttf", "GEORGIAI.TTF"),
+        "bolditalic": (
+            "Georgia Bold Italic.ttf",
+            "georgiaz.ttf",
+            "Georgia-BoldItalic.ttf",
+            "GEORGIAZ.TTF",
+        ),
     },
     "Courier New": {
         "regular": ("Courier New.ttf", "cour.ttf", "COUR.TTF"),
         "bold": ("Courier New Bold.ttf", "courbd.ttf", "Courier New-Bold.ttf", "COURBD.TTF"),
         "italic": ("Courier New Italic.ttf", "couri.ttf", "Courier New-Italic.ttf", "COURI.TTF"),
+        "bolditalic": (
+            "Courier New Bold Italic.ttf",
+            "courbi.ttf",
+            "Courier New-BoldItalic.ttf",
+            "COURBI.TTF",
+        ),
     },
 }
 
@@ -110,7 +146,9 @@ def resolve_pdf_font_path(font_family: str, style: str = "regular") -> str | Non
     if family not in FONT_FAMILY_OPTIONS:
         family = "Arial"
     faces = _FONT_FILE_CANDIDATES.get(family) or {}
-    filenames = faces.get(style) or faces.get("regular") or ()
+    filenames = faces.get(style) or ()
+    if not filenames:
+        return None
     path = _find_font_file(tuple(filenames))
     return str(path) if path else None
 
@@ -293,8 +331,8 @@ def _parse_ttf_face(path: str, style: str) -> PdfFontFace | None:
     flags = {
         "mono": False,
         "serif": False,
-        "italic": style == "italic" or bool(selection & 0x01) or italic_angle < 0,
-        "bold": style == "bold" or weight >= 600 or bool(selection & 0x20),
+        "italic": style in {"italic", "bolditalic"} or bool(selection & 0x01) or italic_angle < 0,
+        "bold": style in {"bold", "bolditalic"} or weight >= 600 or bool(selection & 0x20),
     }
     fallback_name = "".join(character for character in Path(path).stem if character.isalnum()) or "BookFont"
     postscript_name = _pdf_safe_font_name(_ttf_name(tables.get("name") or b"", 6), fallback_name)
@@ -319,8 +357,28 @@ def load_pdf_font(font_family: str, style: str = "regular") -> PdfFontFace | Non
     return _parse_ttf_face(path, style)
 
 
-def pdf_text_width(text: str, size: float, font_family: str, *, bold: bool = False) -> float | None:
-    font = load_pdf_font(font_family, "bold" if bold else "regular")
+def _pdf_width_style(*, bold: bool = False, italic: bool = False) -> str:
+    if bold and italic:
+        return "bolditalic"
+    if italic:
+        return "italic"
+    if bold:
+        return "bold"
+    return "regular"
+
+
+def pdf_text_width(
+    text: str,
+    size: float,
+    font_family: str,
+    *,
+    bold: bool = False,
+    italic: bool = False,
+) -> float | None:
+    style = _pdf_width_style(bold=bold, italic=italic)
+    font = load_pdf_font(font_family, style)
+    if font is None and style == "bolditalic":
+        font = load_pdf_font(font_family, "italic") or load_pdf_font(font_family, "bold")
     if font is None:
         return None
     try:
@@ -333,7 +391,12 @@ def _pdf_font_name(font_family: str, style: str, font: PdfFontFace | None = None
     if font and font.postscript_name:
         return font.postscript_name
     base = "".join(ch for ch in str(font_family) if ch.isalnum()) or "BookFont"
-    suffix = {"regular": "", "bold": "Bold", "italic": "Italic"}.get(style, "")
+    suffix = {
+        "regular": "",
+        "bold": "Bold",
+        "italic": "Italic",
+        "bolditalic": "BoldItalic",
+    }.get(style, "")
     return f"{base}{suffix}" if suffix else base
 
 
@@ -365,12 +428,14 @@ def add_embedded_pdf_font(add_object, font, font_family: str, style: str) -> int
         flags |= 1
     if font_flags.get("serif"):
         flags |= 2
-    if style == "italic" or font_flags.get("italic"):
+    if style in {"italic", "bolditalic"} or font_flags.get("italic"):
         flags |= 64
     ascent = int(round(float(font.ascender) * 1000))
     descent = int(round(float(font.descender) * 1000))
-    stem_v = 120 if style == "bold" or font_flags.get("bold") else 80
-    italic_angle = int(round(getattr(font, "italic_angle", -12 if style == "italic" else 0)))
+    stem_v = 120 if style in {"bold", "bolditalic"} or font_flags.get("bold") else 80
+    italic_angle = int(
+        round(getattr(font, "italic_angle", -12 if style in {"italic", "bolditalic"} else 0))
+    )
     descriptor_ref = add_object(
         "<< /Type /FontDescriptor "
         f"/FontName /{pdf_name} /Flags {flags} /FontBBox [{font_bbox}] "
@@ -392,15 +457,23 @@ def add_embedded_pdf_font(add_object, font, font_family: str, style: str) -> int
     )
 
 
-def add_embedded_pdf_font_set(add_object, font_family: str) -> tuple[int, int, int] | None:
+def add_embedded_pdf_font_set(
+    add_object, font_family: str
+) -> tuple[int, int, int | None, int | None] | None:
     regular = load_pdf_font(font_family, "regular")
     if regular is None:
         return None
     bold = load_pdf_font(font_family, "bold") or regular
-    italic = load_pdf_font(font_family, "italic") or regular
+    italic = load_pdf_font(font_family, "italic")
+    bolditalic = load_pdf_font(font_family, "bolditalic")
     regular_ref = add_embedded_pdf_font(add_object, regular, font_family, "regular")
     if regular_ref is None:
         return None
     bold_ref = add_embedded_pdf_font(add_object, bold, font_family, "bold") or regular_ref
-    italic_ref = add_embedded_pdf_font(add_object, italic, font_family, "italic") or regular_ref
-    return regular_ref, bold_ref, italic_ref
+    italic_ref = add_embedded_pdf_font(add_object, italic, font_family, "italic") if italic else None
+    bolditalic_ref = (
+        add_embedded_pdf_font(add_object, bolditalic, font_family, "bolditalic")
+        if bolditalic
+        else None
+    )
+    return regular_ref, bold_ref, italic_ref, bolditalic_ref

@@ -124,19 +124,48 @@ def _pdf_base_font_names(font_family: str) -> tuple[str, str]:
 def _fitz_builtin_font_names_for(font_family: str) -> dict[str, str]:
     group = _pdf_font_group(font_family)
     if group == "times":
-        return {"regular": "tiro", "bold": "tibo", "italic": "titi"}
+        return {"regular": "tiro", "bold": "tibo", "italic": "titi", "bolditalic": "tibi"}
     if group == "courier":
-        return {"regular": "cour", "bold": "cobo", "italic": "coit"}
-    return {"regular": "helv", "bold": "hebo", "italic": "heit"}
+        return {"regular": "cour", "bold": "cobo", "italic": "coit", "bolditalic": "cobi"}
+    return {"regular": "helv", "bold": "hebo", "italic": "heit", "bolditalic": "hebi"}
+
+
+def _pdf_type1_font_names(font_family: str) -> dict[str, str]:
+    group = _pdf_font_group(font_family)
+    if group == "courier":
+        return {
+            "regular": "Courier",
+            "bold": "Courier-Bold",
+            "italic": "Courier-Oblique",
+            "bolditalic": "Courier-BoldOblique",
+        }
+    if group == "times":
+        return {
+            "regular": "Times-Roman",
+            "bold": "Times-Bold",
+            "italic": "Times-Italic",
+            "bolditalic": "Times-BoldItalic",
+        }
+    return {
+        "regular": "Helvetica",
+        "bold": "Helvetica-Bold",
+        "italic": "Helvetica-Oblique",
+        "bolditalic": "Helvetica-BoldOblique",
+    }
 
 
 def _pdf_italic_font_name(font_family: str) -> str:
-    group = _pdf_font_group(font_family)
-    if group == "courier":
-        return "Courier-Oblique"
-    if group == "times":
-        return "Times-Italic"
-    return "Helvetica-Oblique"
+    return _pdf_type1_font_names(font_family)["italic"]
+
+
+def _pdf_line_style(line: _PdfLine) -> str:
+    if line.bold and line.italic:
+        return "bolditalic"
+    if line.bold:
+        return "bold"
+    if line.italic:
+        return "italic"
+    return "regular"
 
 
 def _normalize_pdf_text(value: object) -> str:
@@ -414,14 +443,16 @@ def _pdf_line_effect_draws(line: _PdfLine) -> list[tuple[float, float, tuple[flo
     return [(0.0, 0.0, line.color)]
 
 
+def _pdf_line_font_ref(line: _PdfLine) -> str:
+    style = _pdf_line_style(line)
+    return {"regular": "/F1", "bold": "/F2", "italic": "/F3", "bolditalic": "/F4"}[style]
+
+
 def _pdf_line_content(line: _PdfLine, font_family: str = "Arial") -> list[str]:
-    if line.bold:
-        font_ref = "/F2"
-    elif line.italic:
-        font_ref = "/F3"
-    else:
-        font_ref = "/F1"
-    line_width = line.width or _text_width(line.text, line.size, font_family)
+    font_ref = _pdf_line_font_ref(line)
+    line_width = line.width or _text_width(
+        line.text, line.size, font_family, bold=line.bold, italic=line.italic
+    )
 
     def draw(x_offset: float, y_offset: float, color: tuple[float, float, float]) -> str:
         r, g, b = color
@@ -547,11 +578,17 @@ class _PdfWriter:
         regular = resolve_pdf_font_path(self.font_family, "regular")
         if not regular:
             return {}
-        return {
+        paths = {
             "regular": regular,
             "bold": resolve_pdf_font_path(self.font_family, "bold") or regular,
-            "italic": resolve_pdf_font_path(self.font_family, "italic") or regular,
         }
+        italic = resolve_pdf_font_path(self.font_family, "italic")
+        if italic:
+            paths["italic"] = italic
+        bolditalic = resolve_pdf_font_path(self.font_family, "bolditalic")
+        if bolditalic:
+            paths["bolditalic"] = bolditalic
+        return paths
 
     def _fitz_builtin_font_names(self) -> dict[str, str]:
         return _fitz_builtin_font_names_for(self.font_family)
@@ -595,10 +632,16 @@ class _PdfWriter:
                 for line in page_data.lines:
                     if not str(line.text or ""):
                         continue
-                    style = "bold" if line.bold else "italic" if line.italic else "regular"
-                    fontname = font_names[style]
+                    style = _pdf_line_style(line)
+                    fontname = font_names.get(style) or font_names[
+                        "italic" if line.italic else "bold" if line.bold else "regular"
+                    ]
                     line_width = line.width or _text_width(
-                        line.text, line.size, self.font_family, bold=line.bold
+                        line.text,
+                        line.size,
+                        self.font_family,
+                        bold=line.bold,
+                        italic=line.italic,
                     )
                     for x_offset, y_offset, color in _pdf_line_effect_draws(line):
                         if line.rotate_180:
@@ -656,20 +699,24 @@ class _PdfWriter:
             return len(objects)
 
         embedded_fonts = add_embedded_pdf_font_set(add_object, self.font_family)
+        type1_names = _pdf_type1_font_names(self.font_family)
+
+        def add_type1_font(style: str) -> int:
+            return add_object(
+                f"<< /Type /Font /Subtype /Type1 /BaseFont /{type1_names[style]} /Encoding /WinAnsiEncoding >>"
+            )
+
         if embedded_fonts:
-            font_regular, font_bold, font_italic = embedded_fonts
+            font_regular, font_bold, font_italic, font_bolditalic = embedded_fonts
+            if font_italic is None:
+                font_italic = add_type1_font("italic")
+            if font_bolditalic is None:
+                font_bolditalic = add_type1_font("bolditalic")
         else:
-            font_regular_name, font_bold_name = _pdf_base_font_names(self.font_family)
-            font_italic_name = _pdf_italic_font_name(self.font_family)
-            font_regular = add_object(
-                f"<< /Type /Font /Subtype /Type1 /BaseFont /{font_regular_name} /Encoding /WinAnsiEncoding >>"
-            )
-            font_bold = add_object(
-                f"<< /Type /Font /Subtype /Type1 /BaseFont /{font_bold_name} /Encoding /WinAnsiEncoding >>"
-            )
-            font_italic = add_object(
-                f"<< /Type /Font /Subtype /Type1 /BaseFont /{font_italic_name} /Encoding /WinAnsiEncoding >>"
-            )
+            font_regular = add_type1_font("regular")
+            font_bold = add_type1_font("bold")
+            font_italic = add_type1_font("italic")
+            font_bolditalic = add_type1_font("bolditalic")
         page_refs: list[int] = []
         pending_pages: list[tuple[_PdfPage, int, dict[str, int]]] = []
         content_refs: set[int] = set()
@@ -754,7 +801,7 @@ class _PdfWriter:
                 "<< /Type /Page "
                 f"/Parent {pages_ref} 0 R "
                 f"/MediaBox [0 0 {page.width:.2f} {page.height:.2f}] "
-                f"/Resources << /Font << /F1 {font_regular} 0 R /F2 {font_bold} 0 R /F3 {font_italic} 0 R >>{xobject_resource} >> "
+                f"/Resources << /Font << /F1 {font_regular} 0 R /F2 {font_bold} 0 R /F3 {font_italic} 0 R /F4 {font_bolditalic} 0 R >>{xobject_resource} >> "
                 f"/Contents {content_ref} 0 R "
                 f"/Annots [{annot_refs}] >>"
             ).encode("latin-1")
@@ -911,9 +958,16 @@ def _phone_name_x(
     return min(desired, max_name_x)
 
 
-def _text_width(text: str, size: float, font_family: str = "Arial", *, bold: bool = False) -> float:
+def _text_width(
+    text: str,
+    size: float,
+    font_family: str = "Arial",
+    *,
+    bold: bool = False,
+    italic: bool = False,
+) -> float:
     normalized = _normalize_pdf_text(text)
-    measured = pdf_text_width(normalized, size, font_family, bold=bold)
+    measured = pdf_text_width(normalized, size, font_family, bold=bold, italic=italic)
     if measured is not None:
         return measured
     group = _pdf_font_group(font_family)
@@ -1009,6 +1063,8 @@ class _InlineHtmlStyleParser(HTMLParser):
     _STYLE_TAGS = {
         "b": "bold",
         "strong": "bold",
+        "i": "italic",
+        "em": "italic",
         "u": "underline",
     }
 
@@ -1016,20 +1072,47 @@ class _InlineHtmlStyleParser(HTMLParser):
         super().__init__()
         self.lines: list[list[dict[str, Any]]] = [[]]
         self.active: set[str] = set()
+        self._style_stack: list[set[str]] = []
+
+    def _styles_from_attrs(self, attrs: list[tuple[str, str | None]]) -> set[str]:
+        style_attr = ""
+        for key, value in attrs:
+            if str(key or "").lower() == "style":
+                style_attr = str(value or "").lower()
+                break
+        found: set[str] = set()
+        if not style_attr:
+            return found
+        if "italic" in style_attr:
+            found.add("italic")
+        if "bold" in style_attr or "font-weight:700" in style_attr.replace(" ", ""):
+            found.add("bold")
+        if "underline" in style_attr:
+            found.add("underline")
+        return found
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = str(tag or "").lower()
         if tag == "br":
             self.lines.append([])
             return
+        added: set[str] = set()
         style = self._STYLE_TAGS.get(tag)
         if style:
-            self.active.add(style)
+            added.add(style)
+        added.update(self._styles_from_attrs(attrs))
+        for item in added:
+            self.active.add(item)
+        self._style_stack.append(added)
 
     def handle_endtag(self, tag: str) -> None:
-        style = self._STYLE_TAGS.get(str(tag or "").lower())
-        if style:
-            self.active.discard(style)
+        if str(tag or "").lower() == "br":
+            return
+        if not self._style_stack:
+            return
+        for item in self._style_stack.pop():
+            if not any(item in frame for frame in self._style_stack):
+                self.active.discard(item)
 
     def _append_text(self, data: str) -> None:
         text = _normalize_pdf_text(unescape(data))
@@ -1038,11 +1121,13 @@ class _InlineHtmlStyleParser(HTMLParser):
         run = {
             "text": text,
             "bold": "bold" in self.active,
+            "italic": "italic" in self.active,
             "underline": "underline" in self.active,
         }
         if (
             self.lines[-1]
             and self.lines[-1][-1]["bold"] == run["bold"]
+            and self.lines[-1][-1]["italic"] == run["italic"]
             and self.lines[-1][-1]["underline"] == run["underline"]
         ):
             self.lines[-1][-1]["text"] += text
@@ -1070,6 +1155,7 @@ def _split_styled_runs_on_newlines(runs: list[dict[str, Any]]) -> list[list[dict
                     {
                         "text": part,
                         "bold": bool(run.get("bold")),
+                        "italic": bool(run.get("italic")),
                         "underline": bool(run.get("underline")),
                     }
                 )
@@ -1082,7 +1168,11 @@ def _html_styled_lines(value: object) -> list[list[dict[str, Any]]]:
         return [[]]
     if "<" not in raw:
         lines = [_normalize_pdf_text(unescape(line)) for line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
-        return [[{"text": line, "bold": False, "underline": False}] for line in lines if line] or [[]]
+        return [
+            [{"text": line, "bold": False, "italic": False, "underline": False}]
+            for line in lines
+            if line
+        ] or [[]]
 
     normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
     normalized = re.sub(r"<br\s*/?>", "<br>", normalized, flags=re.IGNORECASE)
@@ -1113,6 +1203,7 @@ def _append_styled_meeting_pdf_lines(
     tw,
     font_family: str = "Arial",
     cell_bold: bool = False,
+    cell_italic: bool = False,
     cell_underline: bool = False,
 ) -> None:
     for line_index, runs in enumerate(styled_lines or [[]]):
@@ -1125,6 +1216,7 @@ def _append_styled_meeting_pdf_lines(
                 {
                     "text": text,
                     "bold": cell_bold or bool(run.get("bold")),
+                    "italic": cell_italic or bool(run.get("italic")),
                     "underline": cell_underline or bool(run.get("underline")),
                 }
             )
@@ -1132,7 +1224,13 @@ def _append_styled_meeting_pdf_lines(
             continue
         line_y = y - (line_index * line_step)
         total_width = sum(
-            _text_width(item["text"], font_size, font_family, bold=bool(item["bold"]))
+            _text_width(
+                item["text"],
+                font_size,
+                font_family,
+                bold=bool(item["bold"]),
+                italic=bool(item["italic"]),
+            )
             for item in prepared
         )
         line_x = x_base
@@ -1143,9 +1241,22 @@ def _append_styled_meeting_pdf_lines(
         cursor_x = line_x
         for item in prepared:
             text = item["text"]
-            text_width = _text_width(text, font_size, font_family, bold=bool(item["bold"]))
+            text_width = _text_width(
+                text,
+                font_size,
+                font_family,
+                bold=bool(item["bold"]),
+                italic=bool(item["italic"]),
+            )
             page.lines.append(
-                _PdfLine(text=text, x=cursor_x, y=line_y, size=font_size, bold=bool(item["bold"]))
+                _PdfLine(
+                    text=text,
+                    x=cursor_x,
+                    y=line_y,
+                    size=font_size,
+                    bold=bool(item["bold"]),
+                    italic=bool(item["italic"]),
+                )
             )
             if item["underline"]:
                 underline_y = line_y - (font_size * 0.18)
@@ -2521,6 +2632,11 @@ def build_address_book_pdf(
                         line_step=row_line_step,
                         tw=tw,
                         font_family=font_family,
+                        cell_bold=bool(column.get("is_bold") or segment.get("is_bold")),
+                        cell_italic=bool(column.get("is_italic") or segment.get("is_italic")),
+                        cell_underline=bool(
+                            column.get("is_underlined") or segment.get("is_underlined")
+                        ),
                     )
                     segment_line_count = max(
                         1,
@@ -2575,6 +2691,7 @@ def build_address_book_pdf(
                 tw=tw,
                 font_family=font_family,
                 cell_bold=bool(cell.get("is_bold")),
+                cell_italic=bool(cell.get("is_italic")),
                 cell_underline=bool(cell.get("is_underlined")),
             )
         add_row_underline()
@@ -2751,7 +2868,7 @@ def build_address_book_pdf(
                         size = note_run_size(run)
                         width = _text_width(text, size, font_family, bold=bool(run.get("bold")))
                         is_bold = bool(run.get("bold"))
-                        add_text(text, cursor, size=size, bold=is_bold, italic=bool(run.get("italic")) and not is_bold)
+                        add_text(text, cursor, size=size, bold=is_bold, italic=bool(run.get("italic")))
                         if run.get("underline"):
                             rule_y = y - (size * 0.18)
                             page.rules.append(_PdfRule(cursor, rule_y, cursor + width, rule_y, 0.35))

@@ -2171,6 +2171,9 @@ def _flow_print_layer_payloads(flow_columns: list) -> tuple[list[dict[str, Any]]
             "segments": [{"html": html, "align": align}],
             "html": html,
             "align": align,
+            "is_bold": bool(layout_cell.get("is_bold")),
+            "is_italic": bool(layout_cell.get("is_italic")),
+            "is_underlined": bool(layout_cell.get("is_underlined")),
         }
         if is_stacked:
             stacked.append(payload)
