@@ -394,8 +394,12 @@ function addressBookPdfPreviewLayoutMetrics() {
 }
 
 function addressBookPdfContactNameMaxWidthPx(printableWidthPx, fontSizePx, fontFamily = "Arial") {
-  const chWidth = measureAddressBookPdfTextWidth("0", fontSizePx, fontFamily);
-  return Math.max(120, printableWidthPx - (chWidth * 16));
+  const phoneReserve = measureAddressBookPdfTextWidth("000-000-0000", fontSizePx, fontFamily)
+    + measureAddressBookPdfTextWidth(" ", fontSizePx, fontFamily)
+    + measureAddressBookPdfTextWidth("00", fontSizePx, fontFamily)
+    + measureAddressBookPdfTextWidth(" ", fontSizePx, fontFamily)
+    + measureAddressBookPdfTextWidth(" ", fontSizePx, fontFamily);
+  return Math.max(120, printableWidthPx - phoneReserve);
 }
 
 function wrapAddressBookPdfNameWords(text, measureWidth, maxWidth) {

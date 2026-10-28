@@ -1124,13 +1124,17 @@ def _field_list_display_address(address: dict[str, Any], include_home_label: boo
 
 def _field_list_address_column_width_pt(settings: dict[str, Any]) -> float:
     """Width available for name/address text after the fixed phone column."""
-    from app.services.address_book_pdf_service import _text_width
+    from app.services.address_book_pdf_service import _phone_stack_to_name_width, _text_width
 
     font_size = float(settings.get("base_font_size_pt") or 10.0)
     font_family = str(settings.get("font_family") or "Arial")
     column_pt = float(settings.get("column_width_in") or 4.0) * 72.0
-    # Wrap against a 16ch reserve; the visible name starts one space after the code.
-    phone_pt = _text_width("0" * 16, font_size, font_family)
+
+    def _tw(text: str, size: float) -> float:
+        return _text_width(text, size, font_family)
+
+    # Reserve through the one-space indent under the shared family-name column.
+    phone_pt = _phone_stack_to_name_width(font_size, _tw) + _tw(" ", font_size)
     return max(72.0, column_pt - phone_pt)
 
 
@@ -4335,8 +4339,8 @@ main {{
 }}
 .print-field-list-contact-row {{
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  column-gap: 0.33em;
+  grid-template-columns: 14ch minmax(0, 1fr);
+  column-gap: 1ch;
   row-gap: 0;
   break-inside: avoid;
   page-break-inside: avoid;
@@ -4360,6 +4364,7 @@ main {{
 .print-field-list-phone-code {{
   flex: 0 0 auto;
   display: inline-block;
+  min-width: 2ch;
   max-width: 3ch;
   overflow: hidden;
   white-space: pre;
@@ -4454,7 +4459,7 @@ main {{
   font-style: normal;
   font-weight: 500;
   line-height: 1.15;
-  padding-left: 17ch;
+  padding-left: 16ch;
   white-space: normal;
 }}
 .print-field-list-contact-address {{

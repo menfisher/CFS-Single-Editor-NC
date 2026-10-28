@@ -725,8 +725,12 @@ window.addEventListener("DOMContentLoaded", () => {
     const fontSizePt = Number(settings.baseFontSizePt || 10);
     const fontSizePx = (fontSizePt * 96) / 72;
     const columnWidthPx = getEffectiveColumnWidthIn() * 96;
-    // Wrap against a 16ch reserve; the visible name starts one space after the code.
-    const fixedPhoneColumnPx = measureTextWidth("0".repeat(16), "normal");
+    // Reserve through the one-space indent under the shared 2-character code name column.
+    const fixedPhoneColumnPx = measureTextWidth("000-000-0000", "normal")
+      + measureTextWidth(" ", "normal")
+      + measureTextWidth("00", "normal")
+      + measureTextWidth(" ", "normal")
+      + measureTextWidth(" ", "normal");
     return Math.max(120, columnWidthPx - fixedPhoneColumnPx);
   };
 

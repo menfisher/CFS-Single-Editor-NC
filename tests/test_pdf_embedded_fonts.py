@@ -6,6 +6,7 @@ import fitz
 
 from app.database import initialize_database, set_request_db_path
 from app.services.address_book_pdf_service import (
+    PHONE_CODE_SLOT,
     _PdfImage,
     _PdfLine,
     _PdfWriter,
@@ -16,6 +17,7 @@ from app.services.address_book_pdf_service import (
     _phone_display_text,
     _phone_letter_x,
     _phone_name_x,
+    _phone_stack_to_name_width,
     _text_width,
     build_address_book_pdf,
 )
@@ -77,36 +79,41 @@ class PdfEmbeddedFontTests(unittest.TestCase):
         def tw(text: str, size: float) -> float:
             return _text_width(text, size, family)
 
-        phone_x, _legacy_code_x, main_text_x, _cont_x, _name_max = _contact_text_columns(
+        phone_x, _legacy_code_x, main_text_x, cont_x, _name_max = _contact_text_columns(
             0.14 * 72, 3.5 * 72, 0.14 * 72, 7, tw
         )
         ch = tw("0", 7)
         space = tw(" ", 7)
-        self.assertAlmostEqual((main_text_x - phone_x) / ch, 16.0, places=5)
+        slot = tw(PHONE_CODE_SLOT, 7)
+        self.assertAlmostEqual(main_text_x - phone_x, _phone_stack_to_name_width(7, tw), places=5)
+        self.assertAlmostEqual(cont_x - main_text_x, space, places=5)
+        self.assertLess(main_text_x - phone_x, ch * 16)
 
         phone = _phone_display_text("704-965-6271")
-        letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "Sh")
-        self.assertAlmostEqual(letter_x, phone_x + tw(phone, 7) + space, places=5)
+        letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "Le")
+        desired_letter = phone_x + tw(phone, 7) + space
+        self.assertLess(abs(letter_x - desired_letter), space * 0.6)
         self.assertLess(letter_x - (phone_x + tw(phone, 7)), space * 1.15)
         self.assertLess(letter_x, phone_x + (ch * 13) - space)
 
         name_x = _phone_name_x(letter_x, "Sh", 7, tw, main_text_x)
-        self.assertAlmostEqual(name_x, letter_x + tw("Sh", 7) + space, places=5)
-        self.assertLess(name_x, main_text_x)
+        self.assertAlmostEqual(name_x, letter_x + slot + space, places=5)
+        one_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "c")
+        one_name_x = _phone_name_x(one_letter_x, "c", 7, tw, main_text_x)
+        self.assertAlmostEqual(one_name_x, name_x, places=5)
 
-        two_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "wk")
-        two_name_x = _phone_name_x(two_letter_x, "wk", 7, tw, main_text_x)
-        self.assertLessEqual(two_letter_x + tw("wk", 7) + space, main_text_x + 0.01)
-        self.assertAlmostEqual(two_name_x, two_letter_x + tw("wk", 7) + space, places=5)
+        two_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "Le")
+        two_name_x = _phone_name_x(two_letter_x, "Le", 7, tw, main_text_x)
+        self.assertAlmostEqual(two_name_x, name_x, places=5)
 
         other_letter_x = _phone_letter_x(phone, phone_x, main_text_x, 7, tw, "Sh")
         other_name_x = _phone_name_x(other_letter_x, "Sh", 7, tw, main_text_x)
-        self.assertAlmostEqual(name_x, other_name_x, places=5)
+        self.assertAlmostEqual(other_name_x, min(other_letter_x + slot + space, main_text_x), places=5)
 
         long_number = "1-800-555-12345"
         clamped = _phone_letter_x(long_number, phone_x, main_text_x, 7, tw, "wk")
         clamped_name = _phone_name_x(clamped, "wk", 7, tw, main_text_x)
-        self.assertLessEqual(clamped + tw("wk", 7) + space, main_text_x + 0.01)
+        self.assertLessEqual(clamped + slot + space, main_text_x + 0.01)
         self.assertLess(clamped, phone_x + tw(long_number, 7) + space)
         self.assertLessEqual(clamped_name, main_text_x + 0.01)
 
@@ -201,7 +208,7 @@ class PdfEmbeddedFontTests(unittest.TestCase):
             0.14 * 72, 3.5 * 72, 0.14 * 72, 7, tw
         )
         space = tw(" ", 7)
-        self.assertLess(thain["bbox"][0], main_text_x - space * 0.25)
+        self.assertAlmostEqual(thain["bbox"][0], main_text_x, places=1)
 
         phone_span = next(span for span in spans if "704-965-6271" in span["text"])
         old_tab_gap = _legacy_x - (phone_x + tw("704-965-6271", 7))
@@ -219,6 +226,122 @@ class PdfEmbeddedFontTests(unittest.TestCase):
             name_gap = thain["bbox"][0] - letter_span["bbox"][2]
             self.assertGreater(name_gap, space * 0.4)
             self.assertLess(name_gap, space * 1.8)
+
+    def test_one_and_two_letter_codes_share_name_column(self) -> None:
+        family = "Verdana" if resolve_pdf_font_path("Verdana", "regular") else "Arial"
+        tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(tempdir.name) / "app.sqlite3")
+        initialize_database()
+        try:
+            pdf = build_address_book_pdf(
+                fields=[
+                    {
+                        "name": "Field A",
+                        "meetings": [
+                            {
+                                "name": "Meeting 1",
+                                "contacts": [
+                                    {
+                                        "name": "NICHOLS, Maryann",
+                                        "phones": [{"value": "3362018200", "code": "c"}],
+                                        "addresses": [
+                                            {
+                                                "street_address": "100 Test Rd",
+                                                "city": "Shelby",
+                                                "region": "NC",
+                                                "postal_code": "28150",
+                                            }
+                                        ],
+                                        "children": ["Ada"],
+                                        "other_relationships": [],
+                                    },
+                                    {
+                                        "name": "SUMMEY, Leonard",
+                                        "phones": [{"value": "3368348053", "code": "Le"}],
+                                        "addresses": [
+                                            {
+                                                "street_address": "7500 Allen Rd",
+                                                "city": "Shelby",
+                                                "region": "NC",
+                                                "postal_code": "28150",
+                                            }
+                                        ],
+                                        "children": ["Hunter", "Sterling", "Madilynn", "Waylon"],
+                                        "other_relationships": [],
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ],
+                meeting_preview_sections=[],
+                settings={
+                    "address_map_provider": "google",
+                    "address_align": "left",
+                    "include_bible_study_union_info": 0,
+                    "meeting_page_mode": "one_meeting",
+                },
+                layout={
+                    "trim_width_in": 3.5,
+                    "trim_height_in": 5.5,
+                    "margin_left_in": 0.14,
+                    "margin_right_in": 0.14,
+                    "margin_top_in": 0.14,
+                    "margin_bottom_in": 0.14,
+                    "base_font_size_pt": 7,
+                    "line_height": 1.2,
+                    "font_family": family,
+                    "book_title": "Name Column Book",
+                },
+                print_order_mode="default",
+                print_order_json="",
+            )
+        finally:
+            set_request_db_path(None)
+            tempdir.cleanup()
+
+        document = fitz.open(stream=pdf, filetype="pdf")
+        try:
+            page = next(
+                item for item in document if "NICHOLS" in item.get_text() and "SUMMEY" in item.get_text()
+            )
+            spans = [
+                span
+                for block in page.get_text("dict").get("blocks", [])
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+                if str(span.get("text") or "")
+            ]
+        finally:
+            document.close()
+
+        def _span(text: str):
+            return next(span for span in spans if span["text"] == text)
+
+        nichols = _span("NICHOLS")
+        summey = _span("SUMMEY")
+        self.assertAlmostEqual(nichols["bbox"][0], summey["bbox"][0], places=1)
+
+        def tw(text: str, size: float) -> float:
+            return _text_width(text, size, family)
+
+        space = tw(" ", 7)
+        child = next(span for span in spans if "Hunter" in (span.get("text") or "") and "SUMMEY" not in (span.get("text") or ""))
+        address = next(span for span in spans if "7500" in (span.get("text") or ""))
+        self.assertAlmostEqual(child["bbox"][0], summey["bbox"][0] + space, places=1)
+        self.assertAlmostEqual(address["bbox"][0], summey["bbox"][0] + space, places=1)
+
+        phone_span = next(span for span in spans if "336-834-8053" in span["text"])
+        if "Le" in phone_span["text"]:
+            letter_end = phone_span["bbox"][0] + tw("336-834-8053", 7) + space + tw("Le", 7)
+            number_end = phone_span["bbox"][0] + tw("336-834-8053", 7)
+            self.assertGreater(letter_end - number_end, space * 0.4)
+            self.assertLess(letter_end - number_end - tw("Le", 7), space * 1.8)
+        else:
+            letter_span = next(span for span in spans if span["text"] == "Le")
+            number_gap = letter_span["bbox"][0] - phone_span["bbox"][2]
+            self.assertGreater(number_gap, space * 0.4)
+            self.assertLess(number_gap, space * 1.8)
 
     def test_toc_uses_chosen_title_and_entry_font_sizes(self) -> None:
         pages = _build_toc_pages(

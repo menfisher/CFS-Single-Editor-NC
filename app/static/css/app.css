@@ -355,16 +355,16 @@
 
 .address-book-pdf-contact-line {
   display: grid;
-  /* Name starts one space after that row's phone code, like MeetingData. */
-  grid-template-columns: max-content minmax(0, 1fr);
-  column-gap: 0.33em;
+  /* Shared name column: 10-digit number + space + 2-character code slot. */
+  grid-template-columns: 14ch minmax(0, 1fr);
+  column-gap: 1ch;
   align-items: start;
   min-width: 0;
 }
 
 .address-book-pdf-contact-line:has(.address-book-pdf-phone-spacer) {
-  grid-template-columns: 16ch minmax(0, 1fr);
-  column-gap: 0;
+  grid-template-columns: 14ch minmax(0, 1fr);
+  column-gap: 1ch;
 }
 
 .address-book-pdf-phone-stack {
@@ -387,8 +387,8 @@
 
 .address-book-pdf-phone-line.address-book-pdf-phone-spacer {
   visibility: hidden;
-  width: 16ch;
-  max-width: 16ch;
+  width: 14ch;
+  max-width: 14ch;
 }
 
 .address-book-pdf-phone-value,
@@ -418,6 +418,7 @@
   flex: 0 0 auto;
   text-align: left;
   display: inline-block;
+  min-width: 2ch;
   max-width: 3ch;
   overflow: hidden;
   white-space: pre;
@@ -7659,10 +7660,10 @@ button.site-nav-dropdown-item:hover {
 
 .field-list-contact-row {
   display: grid;
-  /* Name starts one space after the phone code, like MeetingData. */
-  grid-template-columns: max-content minmax(0, 1fr);
+  /* Shared name column: 10-digit number + space + 2-character code slot. */
+  grid-template-columns: 14ch minmax(0, 1fr);
   align-items: start;
-  column-gap: 0.33em;
+  column-gap: 1ch;
   width: var(--field-list-column-width-in, 3.55in);
   min-width: var(--field-list-column-width-in, 3.55in);
 }
@@ -7710,6 +7711,7 @@ button.site-nav-dropdown-item:hover {
 .field-list-phone-code {
   flex: 0 0 auto;
   display: inline-block;
+  min-width: 2ch;
   max-width: 3ch;
   overflow: hidden;
   white-space: pre;
@@ -7865,7 +7867,7 @@ button.site-nav-dropdown-item:hover {
   font-style: normal;
   font-weight: 500;
   line-height: 1.15;
-  padding-left: 17ch;
+  padding-left: 16ch;
   white-space: normal;
 }
 

@@ -815,6 +815,21 @@ def _fitz_sync_embedded_font_names(document) -> None:
             continue
 
 
+PHONE_COLUMN_CH_COUNT = 12
+PHONE_NUMBER_SLOT = "000-000-0000"
+PHONE_CODE_SLOT = "00"
+
+
+def _phone_stack_to_name_width(font_size: float, tw) -> float:
+    """Width from the number start to the shared family-name column.
+
+    Number + one space + a 2-character code slot + one space, matching
+    Leonard-style codes such as ``Le``.
+    """
+    space = tw(" ", font_size)
+    return tw(PHONE_NUMBER_SLOT, font_size) + space + tw(PHONE_CODE_SLOT, font_size) + space
+
+
 def _contact_text_columns(
     margin_left: float,
     page_width: float,
@@ -822,18 +837,14 @@ def _contact_text_columns(
     font_size: float,
     tw,
 ) -> tuple[float, float, float, float, float]:
-    """Phone stack reserve: wraps/addresses stay at 16ch+1ch. First names follow the code."""
-    ch_width = tw("0", font_size)
+    """Shared name column after a 2-character phone-code slot; wraps indent one space."""
+    space = tw(" ", font_size)
     phone_x = margin_left
-    main_text_x = phone_x + (ch_width * 16)
-    # Legacy 13ch tab — draw_phone uses _phone_letter_x instead so letters sit tight.
-    phone_code_x = phone_x + (ch_width * 12) + ch_width
-    continuation_x = main_text_x + ch_width
+    main_text_x = phone_x + _phone_stack_to_name_width(font_size, tw)
+    phone_code_x = phone_x + tw(PHONE_NUMBER_SLOT, font_size) + space
+    continuation_x = main_text_x + space
     name_max_width = max(24.0, page_width - margin_right - continuation_x)
     return phone_x, phone_code_x, main_text_x, continuation_x, name_max_width
-
-
-PHONE_COLUMN_CH_COUNT = 12
 
 
 def _phone_display_text(phone_value: object) -> str:
@@ -891,10 +902,10 @@ def _phone_name_x(
     tw,
     max_name_x: float | None = None,
 ) -> float:
-    """Place the last name one space after the drawn phone code, like MeetingData."""
+    """Place the last name one space after a 2-character phone-code slot."""
     space = tw(" ", font_size)
-    code_width = tw(code, font_size) if code else 0.0
-    desired = letter_x + code_width + (space if code else 0.0)
+    code_slot = tw(PHONE_CODE_SLOT, font_size)
+    desired = letter_x + code_slot + space
     if max_name_x is None:
         return desired
     return min(desired, max_name_x)
@@ -2821,22 +2832,7 @@ def build_address_book_pdf(
                     ]
 
                     def first_name_x() -> float:
-                        if not phones:
-                            return main_text_x
-                        first_phone = phones[0]
-                        first_value = _clean(
-                            first_phone.get("value") if isinstance(first_phone, dict) else first_phone
-                        )
-                        first_code = _clean(first_phone.get("code") if isinstance(first_phone, dict) else "")
-                        letter_x = _phone_letter_x(
-                            _phone_display_text(first_value),
-                            phone_x,
-                            main_text_x,
-                            font_size,
-                            tw,
-                            first_code,
-                        )
-                        return _phone_name_x(letter_x, first_code, font_size, tw, main_text_x)
+                        return main_text_x
 
                     name_line_x = first_name_x()
                     if pb_inline_runs and name_lines:
