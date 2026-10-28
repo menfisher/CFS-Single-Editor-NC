@@ -68,37 +68,78 @@ def _build_pdf(rows: list[dict], contact_count: int = 6) -> bytes:
     )
 
 
+def _build_field_list_pdf(rows: list[dict], contact_count: int = 6) -> bytes:
+    contacts = [{"name": f"Contact {index:02d}"} for index in range(1, contact_count + 1)]
+    return build_address_book_pdf(
+        fields=[
+            {
+                "name": "NC Eastern Field/Raleigh",
+                "meetings": [
+                    {"name": "OXFORD", "contacts": contacts},
+                    {
+                        "name": "Field List 1",
+                        "contacts": [],
+                        "is_field_end_list": True,
+                        "field_end_list_order": 1,
+                    },
+                ],
+            }
+        ],
+        meeting_preview_sections=[
+            {"field": "NC Eastern Field/Raleigh", "meeting": "Field List 1", "rows": rows},
+        ],
+        settings={"meeting_page_mode": "one_meeting", "include_bible_study_union_info": 1},
+        layout=_LAYOUT,
+        print_order_mode="default",
+        print_order_json="",
+    )
+
+
 class PrintNewPageTests(unittest.TestCase):
     def test_print_new_page_starts_a_new_page(self) -> None:
         rows = [
+            _table_row("FieldListIntro"),
             _table_row("FieldListTable", start=True, end=True, print_new_page=True),
         ]
-        pages = _page_texts(_build_pdf(rows))
-        contact_pages = [index for index, text in enumerate(pages) if "Contact 01" in text]
+        pages = _page_texts(_build_field_list_pdf(rows))
+        intro_pages = [index for index, text in enumerate(pages) if "FieldListIntro" in text]
         table_pages = [index for index, text in enumerate(pages) if "FieldListTable" in text]
-        self.assertTrue(contact_pages, pages)
+        self.assertTrue(intro_pages, pages)
         self.assertTrue(table_pages, pages)
-        self.assertGreater(table_pages[0], contact_pages[0])
-        self.assertNotIn("FieldListTable", pages[contact_pages[0]])
+        self.assertGreater(table_pages[0], intro_pages[0])
+        self.assertNotIn("FieldListTable", pages[intro_pages[0]])
 
     def test_print_new_page_keeps_grouped_tables_together(self) -> None:
         group = "block-0-group-with-table-below"
         rows = [
+            _table_row("FieldListIntro"),
             _table_row("FirstGroupedTable", start=True, end=True, print_new_page=True, group=group),
             _table_row("SecondGroupedTable", start=True, end=True, group=group),
         ]
-        pages = _page_texts(_build_pdf(rows))
+        pages = _page_texts(_build_field_list_pdf(rows))
         first_pages = [index for index, text in enumerate(pages) if "FirstGroupedTable" in text]
         second_pages = [index for index, text in enumerate(pages) if "SecondGroupedTable" in text]
-        contact_pages = [index for index, text in enumerate(pages) if "Contact 01" in text]
+        intro_pages = [index for index, text in enumerate(pages) if "FieldListIntro" in text]
         self.assertEqual(first_pages, second_pages)
-        self.assertTrue(contact_pages)
-        self.assertGreater(first_pages[0], contact_pages[0])
+        self.assertTrue(intro_pages)
+        self.assertGreater(first_pages[0], intro_pages[0])
         self.assertIn("FirstGroupedTable", pages[first_pages[0]])
         self.assertIn("SecondGroupedTable", pages[first_pages[0]])
-        self.assertNotIn("Contact 01", pages[first_pages[0]])
+        self.assertNotIn("FieldListIntro", pages[first_pages[0]])
 
-    def test_print_new_page_persists_on_a_table_start_row(self) -> None:
+    def test_meeting_print_new_page_is_ignored(self) -> None:
+        rows = [
+            _table_row("MeetingTable", start=True, end=True, print_new_page=True),
+        ]
+        pages = _page_texts(_build_pdf(rows))
+        contact_pages = [index for index, text in enumerate(pages) if "Contact 01" in text]
+        table_pages = [index for index, text in enumerate(pages) if "MeetingTable" in text]
+        self.assertTrue(contact_pages, pages)
+        self.assertTrue(table_pages, pages)
+        self.assertEqual(table_pages[0], contact_pages[0])
+        self.assertIn("MeetingTable", pages[contact_pages[0]])
+
+    def test_meeting_editor_clears_print_new_page(self) -> None:
         tempdir = tempfile.TemporaryDirectory()
         set_request_db_path(Path(tempdir.name) / "app.sqlite3")
         initialize_database()
@@ -136,11 +177,11 @@ class PrintNewPageTests(unittest.TestCase):
                 (row["id"],),
             )
             reloaded = get_meeting_v2_section_editor(section_id)["rows"][0]
-            self.assertEqual(int(saved["print_new_page"]), 1)
+            self.assertEqual(int(saved["print_new_page"]), 0)
             self.assertEqual(int(saved["group_with_table_below"]), 1)
             self.assertEqual(int(saved["no_meeting_association"]), 1)
             self.assertIn("table_start", str(saved["row_kind"]))
-            self.assertTrue(reloaded["print_new_page"])
+            self.assertFalse(reloaded["print_new_page"])
             self.assertTrue(reloaded["group_with_table_below"])
             self.assertTrue(reloaded["no_meeting_association"])
             self.assertFalse(reloaded.get("is_field_end_list"))

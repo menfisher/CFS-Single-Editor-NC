@@ -2415,7 +2415,7 @@ def save_meeting_v2_section(
                     "row_kind": _normalize_row_kind_value(row.get("row_kind") or "content"),
                     "group_with_table_below": int(row.get("group_with_table_below") or 0),
                     "no_meeting_association": 0 if field_list_editor else int(row.get("no_meeting_association") or 0),
-                    "print_new_page": int(row.get("print_new_page") or 0),
+                    "print_new_page": int(row.get("print_new_page") or 0) if field_list_editor else 0,
                     "format_code": str(row.get("format_code") or ""),
                     "label_text": str(row.get("label_text") or ""),
                     "notes": str(row.get("notes") or ""),

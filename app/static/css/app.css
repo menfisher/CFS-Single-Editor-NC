@@ -6450,6 +6450,15 @@ button.site-nav-dropdown-item:hover {
   align-items: center;
 }
 
+.wysiwyg-gutter .wysiwyg-row-order-input {
+  width: 3.4rem;
+  min-width: 3.4rem;
+  max-width: 3.4rem;
+  flex: 0 0 3.4rem;
+  padding-left: 8px;
+  padding-right: 6px;
+}
+
 .wysiwyg-row-control-format {
   width: auto;
   min-width: 0;
@@ -6515,7 +6524,7 @@ button.site-nav-dropdown-item:hover {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
 }
 

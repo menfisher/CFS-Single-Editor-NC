@@ -3126,7 +3126,7 @@ def build_address_book_pdf(
                     bool(row.get("is_table_start_row")) and bool(row.get("no_meeting_association"))
                     for row in first_chunk
                 )
-                first_chunk_print_new_page = any(
+                first_chunk_print_new_page = is_field_end_list and any(
                     bool(row.get("is_table_start_row")) and bool(row.get("print_new_page"))
                     for row in first_chunk
                 )
@@ -3146,7 +3146,7 @@ def build_address_book_pdf(
                         bool(row.get("is_table_start_row")) and bool(row.get("no_meeting_association"))
                         for row in chunk
                     )
-                    print_new_page = any(
+                    print_new_page = is_field_end_list and any(
                         bool(row.get("is_table_start_row")) and bool(row.get("print_new_page"))
                         for row in chunk
                     )

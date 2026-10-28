@@ -159,7 +159,7 @@
                   </div>
                   <div class="wysiwyg-row-control wysiwyg-row-control-kind">
                     <label class="form-label form-label-inline" for="row_order_{{ row.id }}">Order</label>
-                    <input id="row_order_{{ row.id }}" name="row_order_{{ row.id }}" type="number" value="{{ row.row_order }}">
+                    <input id="row_order_{{ row.id }}" name="row_order_{{ row.id }}" class="wysiwyg-row-order-input" type="number" value="{{ row.row_order }}">
                   </div>
                   <div class="wysiwyg-row-control">
                     <span class="form-label form-label-inline">Kind</span>
@@ -362,6 +362,7 @@
                     class="wysiwyg-table-start-options {% if not row.is_table_start_row %}wysiwyg-row-group-toggle-hidden{% endif %}"
                     data-table-start-option-wrap
                   >
+                    {% if section.is_field_end_list %}
                     <label class="wysiwyg-row-group-toggle" for="print_new_page_{{ row.id }}">
                       <input
                         id="print_new_page_{{ row.id }}"
@@ -374,6 +375,7 @@
                       >
                       <span>print new page</span>
                     </label>
+                    {% endif %}
                     <label class="wysiwyg-row-group-toggle" for="group_with_table_below_{{ row.id }}">
                       <input
                         id="group_with_table_below_{{ row.id }}"
@@ -673,7 +675,7 @@
           {% if section.is_field_end_list %}
           <p class="app-modal-copy"><strong>table start</strong> begins a table. Two options appear: <strong>print new page</strong> starts this table on a new printed page. <strong>group with table below</strong> keeps this table with the next. If print new page is also on, the pair shares that new page when they fit. Field lists already print at the end of the Field without a meeting heading.</p>
           {% else %}
-          <p class="app-modal-copy"><strong>table start</strong> begins a table. Three options appear: <strong>print new page</strong> starts this table on a new printed page. <strong>group with table below</strong> keeps this table with the next. If print new page is also on, the pair shares that new page when they fit. <strong>no meeting association</strong> prints an extra table behind a meeting without the meeting name at the top. This option appears on regular meetings, not Field lists.</p>
+          <p class="app-modal-copy"><strong>table start</strong> begins a table. Two options appear: <strong>group with table below</strong> keeps this table with the next. <strong>no meeting association</strong> prints an extra table behind a meeting without the meeting name at the top. This option appears on regular meetings, not Field lists.</p>
           {% endif %}
           <p class="app-modal-copy"><strong>table end</strong> ends the table.</p>
           <p class="app-modal-copy"><strong>Font size</strong> sets this row's type size. Rows after table start can keep that table's size until table end.</p>
