@@ -1,22 +1,22 @@
 {
   "format": "contactsfreeshare.app_update.v1",
-  "latest_version": "1.247",
+  "latest_version": "1.248",
   "edition": "single-editor",
   "release_date": "2026-10-27",
   "notes": "Describe what changed in this release.",
   "packages": {
     "mac": {
       "label": "Mac",
-      "filename": "ContactsFreeShare-SingleEditor-1.247-mac.zip",
-      "download_url": "ContactsFreeShare-SingleEditor-1.247-mac.zip",
+      "filename": "ContactsFreeShare-SingleEditor-1.248-mac.zip",
+      "download_url": "ContactsFreeShare-SingleEditor-1.248-mac.zip",
       "file_id": "",
       "mime_type": "application/zip"
     }
 ,
     "windows": {
       "label": "Windows",
-      "filename": "ContactsFreeShare-SingleEditor-1.247-windows.zip",
-      "download_url": "ContactsFreeShare-SingleEditor-1.247-windows.zip",
+      "filename": "ContactsFreeShare-SingleEditor-1.248-windows.zip",
+      "download_url": "ContactsFreeShare-SingleEditor-1.248-windows.zip",
       "file_id": "",
       "mime_type": "application/zip"
     }
