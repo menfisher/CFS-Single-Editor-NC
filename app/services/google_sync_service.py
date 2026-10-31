@@ -128,6 +128,7 @@ BOOK_LAYOUT_SETTING_COLUMNS = [
     "base_font_size_pt",
     "title_font_size_pt",
     "toc_font_size_pt",
+    "index_font_size_pt",
     "line_height",
     "meeting_table_column_count",
     "meeting_table_column_gap_px",
@@ -249,6 +250,7 @@ SYNC_NOTICE_MESSAGES = {
     "field_list_saved": "Field List template was saved locally and queued for the next Drive upload.",
     "address_book_settings_saved": "Field List settings were saved locally and queued for the next Drive upload.",
     "address_book_pdf_uploaded": "Address Book PDF was saved to Google Drive.",
+    "address_book_pdf_saving_to_drive": "Address Book PDF is ready to preview. Saving a copy to Google Drive now.",
     "address_book_pdf_created": "Address Book PDF was created for preview. Save it to this computer or print it from the preview.",
     "address_book_pdf_failed": "Address Book PDF export failed.",
     "address_book_pdf_preview_drive_failed": "Address Book PDF was created for preview, but Drive upload failed.",
@@ -7170,6 +7172,7 @@ def _coerce_book_layout_preset_payload(raw_preset: object) -> dict | None:
         "margin_top_in",
         "margin_bottom_in",
         "base_font_size_pt",
+        "index_font_size_pt",
         "line_height",
         "screen_preview_scale",
     ):
@@ -7182,6 +7185,8 @@ def _coerce_book_layout_preset_payload(raw_preset: object) -> dict | None:
             cleaned[column] = int(cleaned.get(column) or 0)
         except (TypeError, ValueError):
             cleaned[column] = 0
+    from app.services.google_group_names import usable_shared_contacts_group_name
+
     for column, fallback in (
         ("meetingdata_title_bar_color", "#e3eff3"),
         ("meetingdata_primary_row_color", "#f8f3e3"),
@@ -7191,9 +7196,12 @@ def _coerce_book_layout_preset_payload(raw_preset: object) -> dict | None:
         ("contacts_primary_row_color", "#f8f3e3"),
         ("contacts_secondary_row_color", "#edf5f7"),
         ("contacts_highlight_row_color", "#ffe3a1"),
-        ("shared_contacts_group_name", "TriState Separates (Shared)"),
+        ("shared_contacts_group_name", ""),
     ):
-        cleaned[column] = _clean(cleaned.get(column)) or fallback
+        cleaned_value = _clean(cleaned.get(column))
+        if column == "shared_contacts_group_name":
+            cleaned_value = usable_shared_contacts_group_name(cleaned_value)
+        cleaned[column] = cleaned_value or fallback
     return cleaned if cleaned["id"] > 0 else None
 
 
@@ -9126,8 +9134,14 @@ def _contact_groups_map(access_token: str) -> dict[str, str]:
 
 
 def _contact_groups_lookup(access_token: str) -> tuple[dict[str, str], dict[str, str]]:
+    from app.services.google_group_names import strip_google_shared_suffix
+
     resource_to_name = _contact_groups_map(access_token)
     name_to_resource = {name: resource for resource, name in resource_to_name.items() if name}
+    for resource, name in resource_to_name.items():
+        stripped = strip_google_shared_suffix(name)
+        if stripped and stripped not in name_to_resource:
+            name_to_resource[stripped] = resource
     resource_to_name.setdefault("contactGroups/myContacts", "myContacts")
     name_to_resource.setdefault("myContacts", "contactGroups/myContacts")
     return resource_to_name, name_to_resource
@@ -9155,39 +9169,34 @@ def _split_group_membership_text(value: str | None) -> list[str]:
 
 
 def _group_membership_text(group_names: list[str]) -> str:
-    return ":::".join(name for name in group_names if name)
+    from app.services.google_group_names import normalize_google_group_names
+
+    return ":::".join(normalize_google_group_names(group_names))
 
 
 def _shared_group_membership_names(field_name: str, meeting_name: str) -> list[str]:
-    cleaned_field_name = _clean(field_name)
-    cleaned_meeting_name = _clean(meeting_name)
-    if not cleaned_field_name or not cleaned_meeting_name:
-        return []
-    from app.services.preset_service import get_shared_contacts_group_name
+    from app.services.region_group_names import contact_group_membership_names
 
-    return [
-        f"{cleaned_field_name} - {cleaned_meeting_name} (Shared)",
-        get_shared_contacts_group_name(),
-        "myContacts",
-    ]
+    return contact_group_membership_names(field_name, meeting_name)
 
 
 def _parse_field_meeting(group_names: list[str]) -> tuple[str, str]:
-    for name in group_names:
-        text = str(name or "").strip()
-        if " - " not in text:
-            continue
-        base = text[:-8].strip() if text.endswith("(Shared)") else text
-        field_name, meeting_name = base.split(" - ", 1)
-        if field_name and meeting_name:
-            return field_name.strip(), meeting_name.strip()
-    return "", ""
+    from app.services.google_group_names import parse_field_meeting_from_group_names
+
+    return parse_field_meeting_from_group_names(group_names)
 
 
 def _parse_field_meeting_from_organizations(organizations: list[dict]) -> tuple[str, str]:
+    from app.services.google_group_names import (
+        is_retired_catchall_group_name,
+        strip_google_shared_suffix,
+    )
+
     for item in organizations:
-        field_name = _clean(item.get("title"))
-        meeting_name = _clean(item.get("name"))
+        field_name = strip_google_shared_suffix(_clean(item.get("title")))
+        meeting_name = strip_google_shared_suffix(_clean(item.get("name")))
+        if is_retired_catchall_group_name(field_name):
+            continue
         if field_name or meeting_name:
             return field_name, meeting_name
     return "", ""
@@ -9525,6 +9534,29 @@ GOOGLE_RELATION_TYPE_ALIASES = {
 
 
 CFS_RELATION_TYPES_FIELD = "CFS Relation Types"
+CFS_MTG_HOME_ELDER_FIELD = "1 - Meeting home, 2 - Elder"
+CFS_MEETS_IN_STATE_FIELD = "Meets in different state"
+CFS_DO_NOT_PRINT_FIELD = "Do not Print"
+_CFS_MTG_HOME_ELDER_FIELD_KEYS = frozenset(
+    {
+        CFS_MTG_HOME_ELDER_FIELD.casefold(),
+        "meeting/home/elder",
+        "mtg home-1/elder-2",
+    }
+)
+_CFS_MEETS_IN_STATE_FIELD_KEYS = frozenset(
+    {
+        CFS_MEETS_IN_STATE_FIELD.casefold(),
+        "meets_in_state",
+    }
+)
+_CFS_DO_NOT_PRINT_FIELD_KEYS = frozenset(
+    {
+        CFS_DO_NOT_PRINT_FIELD.casefold(),
+        "do not print",
+        "do_not_print",
+    }
+)
 _LOSSY_GOOGLE_RELATION_TYPES = {"", "other", "spouse"}
 _CFS_SPOUSE_LABELS = {"husband", "wife"}
 
@@ -9546,6 +9578,53 @@ def _google_relation_type(value: str | None) -> str:
 
 def _is_cfs_relation_types_field(value: object) -> bool:
     return _clean(value).casefold() == CFS_RELATION_TYPES_FIELD.casefold()
+
+
+def _is_mtg_home_elder_field(value: object) -> bool:
+    return _clean(value).casefold() in _CFS_MTG_HOME_ELDER_FIELD_KEYS
+
+
+def _is_meets_in_state_field(value: object) -> bool:
+    return _clean(value).casefold() in _CFS_MEETS_IN_STATE_FIELD_KEYS
+
+
+def _is_do_not_print_field(value: object) -> bool:
+    return _clean(value).casefold() in _CFS_DO_NOT_PRINT_FIELD_KEYS
+
+
+def _is_cfs_hidden_user_defined_field(value: object) -> bool:
+    return (
+        _is_cfs_relation_types_field(value)
+        or _is_mtg_home_elder_field(value)
+        or _is_meets_in_state_field(value)
+        or _is_do_not_print_field(value)
+    )
+
+
+def _user_defined_field_value(user_defined, matcher) -> str:
+    for item in user_defined or []:
+        if not isinstance(item, dict):
+            continue
+        if matcher(item.get("key") or item.get("field_type")):
+            return _clean(item.get("value") or item.get("field_value"))
+    return ""
+
+
+def _mtg_home_elder_flag_from_user_defined(user_defined) -> str:
+    """Read the 1/2 code from the Google custom-field VALUE, never from the label."""
+    return _user_defined_field_value(user_defined, _is_mtg_home_elder_field)
+
+
+def _meets_in_state_from_user_defined(user_defined) -> str:
+    return _user_defined_field_value(user_defined, _is_meets_in_state_field)
+
+
+def _do_not_print_flag_from_value(value: object) -> int:
+    return 1 if _clean(value).lower() in {"1", "true", "yes", "on"} else 0
+
+
+def _do_not_print_from_user_defined(user_defined) -> int:
+    return _do_not_print_flag_from_value(_user_defined_field_value(user_defined, _is_do_not_print_field))
 
 
 def _encode_cfs_relation_types(relationships: list) -> str:
@@ -9819,7 +9898,7 @@ def _contact_person_payload(contact: dict) -> dict:
     for item in contact.get("custom_fields", []):
         field_key = _clean(item.get("field_type"))
         field_value = _clean(item.get("field_value"))
-        if _is_cfs_relation_types_field(field_key):
+        if _is_cfs_hidden_user_defined_field(field_key):
             continue
         if _is_coordinate_custom_field_key(field_key) and _normalize_coordinates(field_value):
             continue
@@ -9836,6 +9915,18 @@ def _contact_person_payload(contact: dict) -> dict:
         custom_fields.append(
             {"key": CFS_RELATION_TYPES_FIELD, "value": encoded_relation_types}
         )
+    mtg_home_elder_flag = _clean(contact.get("mtg_home_elder_flag")) or _mtg_home_elder_flag_from_user_defined(
+        contact.get("custom_fields")
+    )
+    if mtg_home_elder_flag:
+        custom_fields.append({"key": CFS_MTG_HOME_ELDER_FIELD, "value": mtg_home_elder_flag})
+    meets_in_state = _clean(contact.get("meets_in_state")) or _meets_in_state_from_user_defined(
+        contact.get("custom_fields")
+    )
+    if meets_in_state:
+        custom_fields.append({"key": CFS_MEETS_IN_STATE_FIELD, "value": meets_in_state})
+    if _do_not_print_flag_from_value(contact.get("do_not_print")):
+        custom_fields.append({"key": CFS_DO_NOT_PRINT_FIELD, "value": "1"})
     if custom_fields:
         payload["userDefined"] = custom_fields
 
@@ -9851,26 +9942,36 @@ def _contact_person_payload(contact: dict) -> dict:
 
 
 def _desired_group_names(contact: dict) -> list[str]:
-    values = _split_group_membership_text(contact.get("group_membership"))
-    field_name = _clean(contact.get("fields_text"))
-    meeting_name = _clean(contact.get("meetings_text"))
-    if field_name and meeting_name:
-        shared_group_names = _shared_group_membership_names(field_name, meeting_name)
-        canonical_names = {value.lower() for value in shared_group_names}
-        values = [value for value in values if " - " not in value and _clean(value).lower() not in canonical_names]
-        values.extend(shared_group_names)
-    elif "myContacts" not in values:
-        values.append("myContacts")
+    from app.services.google_group_names import (
+        google_group_names_equivalent,
+        has_google_shared_suffix,
+        is_retired_catchall_group_name,
+        normalize_google_group_names,
+        strip_google_shared_suffix,
+    )
+    from app.services.region_group_names import (
+        contact_group_membership_names,
+        is_region_group_name,
+    )
 
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for item in values:
-        cleaned = _clean(item)
-        if not cleaned or cleaned in seen:
-            continue
-        seen.add(cleaned)
-        deduped.append(cleaned)
-    return deduped
+    values = _split_group_membership_text(contact.get("group_membership"))
+    field_name = strip_google_shared_suffix(_clean(contact.get("fields_text")))
+    meeting_name = strip_google_shared_suffix(_clean(contact.get("meetings_text")))
+    canonical_names = contact_group_membership_names(field_name, meeting_name)
+    values = [
+        strip_google_shared_suffix(value)
+        for value in values
+        if " - " not in strip_google_shared_suffix(value)
+        and not is_retired_catchall_group_name(value)
+        and not is_region_group_name(value)
+        and not any(google_group_names_equivalent(value, canonical) for canonical in canonical_names)
+    ]
+    values.extend(canonical_names)
+    return [
+        name
+        for name in normalize_google_group_names(values)
+        if not has_google_shared_suffix(name)
+    ]
 
 
 def _extract_contact_group_memberships(person: dict) -> set[str]:
@@ -9891,17 +9992,75 @@ def _fetch_google_person(access_token: str, resource_name: str) -> dict:
     return _api_get_json(url, access_token)
 
 
+def _lookup_contact_group_resource(
+    group_name: str,
+    name_to_resource: dict[str, str],
+    resource_to_name: dict[str, str],
+) -> str:
+    from app.services.google_group_names import (
+        google_group_names_equivalent,
+        has_google_shared_suffix,
+        strip_google_shared_suffix,
+    )
+
+    target = _clean(group_name)
+    if not target:
+        return ""
+    blocked = {"contactgroups/mycontacts", "contactgroups/starred"}
+    # Desired clean CFS labels must resolve to the exact clean Google title.
+    # ``Foo (Shared)`` is a different resource and must not be reused as ``Foo``.
+    require_clean_title = not has_google_shared_suffix(target)
+    matches: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for resource_name, name in resource_to_name.items():
+        resource = _clean(resource_name)
+        title = _clean(name)
+        if not resource or resource.casefold() in blocked or resource in seen:
+            continue
+        if require_clean_title:
+            if has_google_shared_suffix(title) or title.casefold() != target.casefold():
+                continue
+        elif not google_group_names_equivalent(title, target):
+            continue
+        seen.add(resource)
+        matches.append((resource, title))
+    if matches:
+        for resource, name in matches:
+            if not has_google_shared_suffix(name):
+                return resource
+        return "" if require_clean_title else matches[0][0]
+
+    stripped = strip_google_shared_suffix(target)
+    candidates = [target]
+    if stripped and stripped != target:
+        candidates.append(stripped)
+    if not require_clean_title and stripped:
+        candidates.append(f"{stripped} (Shared)")
+    for candidate in candidates:
+        resource = _clean(name_to_resource.get(candidate) or "")
+        if not resource or resource.casefold() in blocked:
+            continue
+        title = _clean(resource_to_name.get(resource) or "")
+        if require_clean_title and (not title or has_google_shared_suffix(title)):
+            continue
+        return resource
+    return ""
+
+
 def _ensure_contact_group_resource(
     access_token: str,
     group_name: str,
     name_to_resource: dict[str, str],
     resource_to_name: dict[str, str],
 ) -> str:
-    normalized_name = _clean(group_name)
+    from app.services.google_group_names import has_google_shared_suffix, strip_google_shared_suffix
+
+    normalized_name = strip_google_shared_suffix(_clean(group_name)) or _clean(group_name)
     if not normalized_name:
         return ""
-    existing = name_to_resource.get(normalized_name)
-    if existing:
+    existing = _lookup_contact_group_resource(normalized_name, name_to_resource, resource_to_name)
+    existing_title = _clean(resource_to_name.get(existing) or "") if existing else ""
+    if existing and not has_google_shared_suffix(existing_title):
         return existing
     if normalized_name in {"myContacts", "starred"}:
         resource_name = f"contactGroups/{normalized_name}"
@@ -9916,11 +10075,13 @@ def _ensure_contact_group_resource(
         json_data={"contactGroup": {"name": normalized_name}},
     )
     resource_name = _clean(payload.get("resourceName"))
-    formatted_name = _clean(payload.get("formattedName") or payload.get("name")) or normalized_name
+    raw_formatted_name = _clean(payload.get("formattedName") or payload.get("name")) or normalized_name
+    formatted_name = strip_google_shared_suffix(raw_formatted_name) or normalized_name
     if resource_name:
         name_to_resource[formatted_name] = resource_name
         name_to_resource[normalized_name] = resource_name
-        resource_to_name[resource_name] = formatted_name
+        name_to_resource[raw_formatted_name] = resource_name
+        resource_to_name[resource_name] = raw_formatted_name
     return resource_name
 
 
@@ -10190,9 +10351,15 @@ def _cleanup_empty_app_contact_groups(
 
 
 def _previous_group_names_from_payload(payload: dict) -> list[str]:
+    from app.services.google_group_names import (
+        RETIRED_CATCHALL_GROUP_NAME,
+        strip_google_shared_suffix,
+    )
+    from app.services.region_group_names import REGION_GROUP_NAMES
+
     values = _split_group_membership_text(payload.get("previous_group_membership"))
-    field_name = _clean(payload.get("previous_fields_text"))
-    meeting_name = _clean(payload.get("previous_meetings_text"))
+    field_name = strip_google_shared_suffix(_clean(payload.get("previous_fields_text")))
+    meeting_name = strip_google_shared_suffix(_clean(payload.get("previous_meetings_text")))
     if field_name and meeting_name:
         modern_group_name = f"{field_name} - {meeting_name}"
         legacy_group_name = f"{field_name} - {_strip_trailing_parenthetical(meeting_name)} (Shared)"
@@ -10200,7 +10367,20 @@ def _previous_group_names_from_payload(payload: dict) -> list[str]:
         existing_names = {value.lower() for value in values}
         if modern_group_name.lower() not in existing_names and legacy_group_name.lower() not in existing_names:
             values.append(modern_group_name)
+        values.append(legacy_group_name)
+        extra_labels = [
+            name
+            for name in shared_group_names
+            if name and name.casefold() not in {"mycontacts"} and " - " not in name
+        ]
+        for label in extra_labels:
+            values.append(f"{label} (Shared)")
         values.extend(shared_group_names)
+        values.append(RETIRED_CATCHALL_GROUP_NAME)
+        values.append(f"{RETIRED_CATCHALL_GROUP_NAME} (Shared)")
+    for region_name in REGION_GROUP_NAMES:
+        values.append(region_name)
+        values.append(f"{region_name} (Shared)")
 
     deduped: list[str] = []
     seen: set[str] = set()
@@ -10567,6 +10747,9 @@ def _google_person_import_fields(person: dict, groups_map: dict[str, str]) -> di
         "user_defined": user_defined,
         "user_defined_coordinates": user_defined_coordinates,
         "url_coordinate_candidates": url_coordinate_candidates,
+        "mtg_home_elder_flag": _mtg_home_elder_flag_from_user_defined(user_defined),
+        "meets_in_state": _meets_in_state_from_user_defined(user_defined),
+        "do_not_print": _do_not_print_from_user_defined(user_defined),
     }
 
 
@@ -10696,7 +10879,7 @@ def _insert_contact_child_rows_from_google(
     for index, item in enumerate(fields.get("user_defined") or [], start=1):
         field_type = _clean(item.get("key"))
         field_value = _clean(item.get("value"))
-        if _is_cfs_relation_types_field(field_type):
+        if _is_cfs_hidden_user_defined_field(field_type):
             continue
         if _is_coordinate_custom_field_key(field_type) and _normalize_coordinates(field_value):
             continue
@@ -10727,8 +10910,10 @@ def _insert_contact_from_google_person(conn, fields: dict, *, status: str = "imp
           photo,
           birthday,
           notes,
-          mtg_home_elder_flag
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          mtg_home_elder_flag,
+          meets_in_state,
+          do_not_print
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "",
@@ -10747,7 +10932,12 @@ def _insert_contact_from_google_person(conn, fields: dict, *, status: str = "imp
             fields["photo"],
             fields["birthday"],
             fields["notes"],
-            "",
+            _clean(fields.get("mtg_home_elder_flag"))
+            or _mtg_home_elder_flag_from_user_defined(fields.get("user_defined")),
+            _clean(fields.get("meets_in_state"))
+            or _meets_in_state_from_user_defined(fields.get("user_defined")),
+            _do_not_print_flag_from_value(fields.get("do_not_print"))
+            or _do_not_print_from_user_defined(fields.get("user_defined")),
         ),
     )
     contact_id = int(cursor.lastrowid)
@@ -10757,13 +10947,30 @@ def _insert_contact_from_google_person(conn, fields: dict, *, status: str = "imp
 
 def _update_contact_from_google_person(conn, contact_id: int, fields: dict) -> None:
     existing = conn.execute(
-        "SELECT photo, photo_drive_file_id FROM contacts WHERE id = ?",
+        """
+        SELECT photo, photo_drive_file_id, mtg_home_elder_flag, meets_in_state, do_not_print
+        FROM contacts
+        WHERE id = ?
+        """,
         (int(contact_id),),
     ).fetchone()
     local_relationships = _load_contact_children(conn, "relationships", contact_id)
     photo = fields["photo"]
-    if existing and _remote_has_custom_drive_photo(dict(existing)):
-        photo = _clean_contact_photo_path(existing["photo"])
+    existing_row = dict(existing) if existing else {}
+    if existing_row and _remote_has_custom_drive_photo(existing_row):
+        photo = _clean_contact_photo_path(existing_row["photo"])
+    incoming_mtg = _clean(fields.get("mtg_home_elder_flag")) or _mtg_home_elder_flag_from_user_defined(
+        fields.get("user_defined")
+    )
+    mtg_home_elder_flag = _clean(existing_row.get("mtg_home_elder_flag")) or incoming_mtg
+    incoming_meets = _clean(fields.get("meets_in_state")) or _meets_in_state_from_user_defined(
+        fields.get("user_defined")
+    )
+    meets_in_state = _clean(existing_row.get("meets_in_state")) or incoming_meets
+    incoming_do_not_print = _do_not_print_flag_from_value(fields.get("do_not_print")) or _do_not_print_from_user_defined(
+        fields.get("user_defined")
+    )
+    do_not_print = _do_not_print_flag_from_value(existing_row.get("do_not_print")) or incoming_do_not_print
     conn.execute(
         """
         UPDATE contacts
@@ -10779,7 +10986,10 @@ def _update_contact_from_google_person(conn, contact_id: int, fields: dict) -> N
           given_name = ?,
           photo = ?,
           birthday = ?,
-          notes = ?
+          notes = ?,
+          mtg_home_elder_flag = ?,
+          meets_in_state = ?,
+          do_not_print = ?
         WHERE id = ?
         """,
         (
@@ -10798,6 +11008,9 @@ def _update_contact_from_google_person(conn, contact_id: int, fields: dict) -> N
             photo,
             fields["birthday"],
             fields["notes"],
+            mtg_home_elder_flag,
+            meets_in_state,
+            do_not_print,
             contact_id,
         ),
     )
@@ -11245,8 +11458,10 @@ def import_google_contacts() -> int:
                   photo,
                   birthday,
                   notes,
-                  mtg_home_elder_flag
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  mtg_home_elder_flag,
+                  meets_in_state,
+                  do_not_print
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "",
@@ -11262,7 +11477,9 @@ def import_google_contacts() -> int:
                     _extract_photo_url(person),
                     birthday_text,
                     notes,
-                    "",
+                    _mtg_home_elder_flag_from_user_defined(user_defined),
+                    _meets_in_state_from_user_defined(user_defined),
+                    _do_not_print_from_user_defined(user_defined),
                 ),
             )
             contact_id = int(cursor.lastrowid)
@@ -11359,7 +11576,7 @@ def import_google_contacts() -> int:
             for index, item in enumerate(user_defined, start=1):
                 field_type = _clean(item.get("key"))
                 field_value = _clean(item.get("value"))
-                if _is_cfs_relation_types_field(field_type):
+                if _is_cfs_hidden_user_defined_field(field_type):
                     continue
                 if _is_coordinate_custom_field_key(field_type) and _normalize_coordinates(field_value):
                     continue

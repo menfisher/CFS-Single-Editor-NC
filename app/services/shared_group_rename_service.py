@@ -18,6 +18,7 @@ from app.services.google_sync_service import (
     _split_group_membership_text,
     ensure_google_sync_records,
 )
+from app.services.google_group_names import strip_google_shared_suffix
 from app.services.share_sync_service import rename_share_app_group
 
 
@@ -71,7 +72,7 @@ def _set_pending_shared_group_rename(payload: dict | None) -> None:
 
 
 def replace_membership_group_name(value: str, old_name: str, new_name: str) -> str:
-    next_name = _clean(new_name)
+    next_name = strip_google_shared_suffix(_clean(new_name))
     if not next_name:
         return str(value or "")
     replaced = False
@@ -190,7 +191,7 @@ def sync_share_invite_display_name(group_name: str) -> dict | None:
 
 def apply_shared_contacts_group_rename(old_name: str, new_name: str) -> dict:
     previous = _clean(old_name)
-    next_name = _clean(new_name)
+    next_name = strip_google_shared_suffix(_clean(new_name))
     result = {
         "ok": True,
         "notice_key": "shared_group_renamed",

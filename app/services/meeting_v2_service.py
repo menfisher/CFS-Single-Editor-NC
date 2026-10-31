@@ -58,6 +58,7 @@ DEFAULT_BOOK_PRESET = {
     "base_font_size_pt": 7.0,
     "title_font_size_pt": 12.0,
     "toc_font_size_pt": 10.0,
+    "index_font_size_pt": 10.0,
     "line_height": 1.2,
     "meeting_table_column_count": 28,
     "meeting_table_column_gap_px": 6,
@@ -66,7 +67,7 @@ DEFAULT_BOOK_PRESET = {
     "meetingdata_primary_row_color": "#f8f3e3",
     "meetingdata_secondary_row_color": "#edf5f7",
     "meetingdata_highlight_row_color": "#ffe3a1",
-    "shared_contacts_group_name": "TriState Separates (Shared)",
+    "shared_contacts_group_name": "",
     "is_default": 1,
 }
 

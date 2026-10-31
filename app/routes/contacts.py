@@ -18,6 +18,7 @@ from app.config import UPLOADS_DIR
 from app.services.backup_service import build_contacts_backup_bytes
 from app.services.contact_export_service import build_contacts_csv_bytes, build_contacts_vcard_bytes, build_google_contacts_csv_bytes
 from app.services.preset_service import get_shared_contacts_group_name
+from app.services.region_group_names import region_group_preview_payload
 from app.services.meeting_toc_service import list_unlisted_toc_meetings, set_meetings_unlisted_in_toc
 from app.services.contact_service import (
     add_contact_assignment_option,
@@ -577,6 +578,7 @@ def contact_new_form(
             "row_colors": get_contact_row_colors(),
             "is_new_contact": True,
             "shared_contacts_group_name": get_shared_contacts_group_name(),
+            "region_group_preview": region_group_preview_payload(),
             "google_sync": get_google_sync_summary(),
         },
     )
@@ -691,6 +693,7 @@ def contact_edit_form(
             "row_colors": get_contact_row_colors(),
             "is_new_contact": False,
             "shared_contacts_group_name": get_shared_contacts_group_name(),
+            "region_group_preview": region_group_preview_payload(),
             "google_notice_message": get_notice_message(google_notice),
             "google_sync": get_google_sync_summary(),
             "pending_photo_change": pending_photo_change,
@@ -930,6 +933,7 @@ def contacts_move_selected_form(
             "return_to": safe_return_to,
             "row_colors": get_contact_row_colors(),
             "shared_contacts_group_name": get_shared_contacts_group_name(),
+            "region_group_preview": region_group_preview_payload(),
         },
     )
 

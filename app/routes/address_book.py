@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
@@ -17,6 +18,8 @@ from app.services.address_book_pdf_service import (
 from app.services.field_list_service import (
     get_address_book_settings,
     get_field_list_builder_context,
+    meeting_font_size_override,
+    meeting_line_height_override,
     save_address_book_settings,
 )
 from app.services.google_sync_service import (
@@ -37,6 +40,8 @@ from app.web_templates import templates
 
 router = APIRouter(prefix="/address-book", tags=["address-book"])
 ADDRESS_BOOK_PDF_PREVIEW_DIR = UPLOADS_DIR / "address_book_pdfs"
+_ADDRESS_BOOK_PDF_DRIVE_LOCK = threading.Lock()
+_ADDRESS_BOOK_PDF_DRIVE_JOBS: dict[str, dict[str, str]] = {}
 
 
 def _signin_sync_redirect_if_blocked():
@@ -57,6 +62,73 @@ def _address_book_pdf_preview_path(filename: str) -> Path:
 
 def _address_book_pdf_can_save_to_drive() -> bool:
     return get_current_access_role() == "editor" and is_editing_allowed()
+
+
+def _address_book_pdf_drive_job_key(filename: str) -> str:
+    return Path(str(filename or "")).name
+
+
+def _address_book_pdf_drive_job_status(filename: str) -> dict[str, str]:
+    job_key = _address_book_pdf_drive_job_key(filename)
+    with _ADDRESS_BOOK_PDF_DRIVE_LOCK:
+        job = dict(_ADDRESS_BOOK_PDF_DRIVE_JOBS.get(job_key) or {})
+    return {
+        "status": str(job.get("status") or "idle"),
+        "notice": str(job.get("notice") or ""),
+    }
+
+
+def _start_address_book_pdf_drive_upload(filename: str, content: bytes, *, printed: bool) -> None:
+    job_key = _address_book_pdf_drive_job_key(filename)
+    pdf_bytes = bytes(content or b"")
+    with _ADDRESS_BOOK_PDF_DRIVE_LOCK:
+        _ADDRESS_BOOK_PDF_DRIVE_JOBS[job_key] = {
+            "status": "pending",
+            "notice": "address_book_pdf_saving_to_drive",
+        }
+
+    def run() -> None:
+        notice = "address_book_pdf_uploaded"
+        status = "done"
+        try:
+            if printed:
+                upload_address_book_printed_pdf_to_google_drive(job_key, pdf_bytes)
+            else:
+                upload_address_book_pdf_to_google_drive(job_key, pdf_bytes)
+        except (RuntimeError, HTTPError, URLError, OSError):
+            notice = "address_book_pdf_preview_drive_failed"
+            status = "error"
+        except Exception:
+            notice = "address_book_pdf_preview_drive_failed"
+            status = "error"
+        with _ADDRESS_BOOK_PDF_DRIVE_LOCK:
+            _ADDRESS_BOOK_PDF_DRIVE_JOBS[job_key] = {"status": status, "notice": notice}
+
+    threading.Thread(
+        target=run,
+        name=f"address-book-pdf-drive-{job_key}",
+        daemon=True,
+    ).start()
+
+
+def _redirect_after_address_book_pdf_ready(
+    filename: str,
+    pdf_bytes: bytes,
+    saved_id: int,
+    *,
+    printed: bool = False,
+    autoprint: bool = False,
+) -> RedirectResponse:
+    ADDRESS_BOOK_PDF_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    _address_book_pdf_preview_path(filename).write_bytes(pdf_bytes)
+    notice = "address_book_pdf_created"
+    if _address_book_pdf_can_save_to_drive():
+        notice = "address_book_pdf_saving_to_drive"
+        _start_address_book_pdf_drive_upload(filename, pdf_bytes, printed=printed)
+    query = f"preset_id={saved_id}&notice={notice}"
+    if autoprint:
+        query += "&autoprint=1"
+    return RedirectResponse(url=f"/address-book/pdf/view/{filename}?{query}", status_code=303)
 
 
 def _address_book_pdf_meeting_home_last_name(contacts: list[dict]) -> str:
@@ -80,6 +152,7 @@ def _address_book_pdf_fields_from_context(field_list_context: dict, *, preview_l
         return {
             "name": meeting.get("name", ""),
             "home_last_name": _address_book_pdf_meeting_home_last_name(contacts),
+            "line_height": meeting.get("line_height") or 0,
             "contacts": [
                 _address_book_pdf_contact_preview(contact)
                 for contact in preview_contacts
@@ -109,6 +182,7 @@ def _address_book_pdf_layout_from_form(form) -> dict:
         "base_font_size_pt": form.get("base_font_size_pt"),
         "title_font_size_pt": form.get("title_font_size_pt"),
         "toc_font_size_pt": form.get("toc_font_size_pt"),
+        "index_font_size_pt": form.get("index_font_size_pt"),
         "line_height": form.get("line_height"),
         "meeting_table_column_count": form.get("meeting_table_column_count"),
         "meeting_table_column_gap_px": form.get("meeting_table_column_gap_px"),
@@ -181,7 +255,11 @@ def _address_book_pdf_settings_from_form(form) -> dict:
         "address_align": form.get("address_align"),
         "print_order_mode": form.get("print_order_mode"),
         "print_order_json": form.get("print_order_json"),
+        "meeting_line_height_json": form.get("meeting_line_height_json"),
+        "meeting_font_size_json": form.get("meeting_font_size_json"),
         "meeting_page_mode": form.get("meeting_page_mode"),
+        "field_separator_pages": form.get("field_separator_pages"),
+        "double_column_index": form.get("double_column_index"),
         "selected_field_name": form.get("selected_field_name"),
         "selected_meeting_name": form.get("selected_meeting_name"),
     }
@@ -241,12 +319,31 @@ def _address_book_pdf_selected_field_names(form) -> list[str]:
     return [str(name) for name in selected_field_names] if isinstance(selected_field_names, list) else []
 
 
-def _address_book_pdf_fields_for_print(form, field_list_context: dict) -> list[dict]:
+def _address_book_pdf_fields_for_print(form, field_list_context: dict, settings: dict | None = None) -> list[dict]:
     fields = _address_book_pdf_fields_from_context(field_list_context)
     selected_field_names = _address_book_pdf_selected_field_names(form)
     if selected_field_names:
         selected_names = set(selected_field_names)
         fields = [field for field in fields if str(field.get("name") or "") in selected_names]
+    raw_line_heights = (settings or {}).get("meeting_line_height_json")
+    raw_font_sizes = (settings or {}).get("meeting_font_size_json")
+    if raw_line_heights or raw_font_sizes:
+        for field in fields:
+            field_name = str(field.get("name") or "")
+            for meeting in field.get("meetings") or []:
+                meeting_name = str(meeting.get("name") or "")
+                if raw_line_heights:
+                    meeting["line_height"] = meeting_line_height_override(
+                        raw_line_heights,
+                        field_name,
+                        meeting_name,
+                    )
+                if raw_font_sizes:
+                    meeting["font_size_pt"] = meeting_font_size_override(
+                        raw_font_sizes,
+                        field_name,
+                        meeting_name,
+                    )
     return fields
 
 
@@ -255,8 +352,9 @@ def _address_book_pdf_contact_preview(contact: dict) -> dict:
         {
             "value": str(phone.get("value") or "").strip(),
             "code": str(phone.get("code") or "").strip(),
-            "type": str(phone.get("type") or "").strip(),
+            "type": str(phone.get("type") or phone.get("phone_type") or "").strip(),
             "custom_label": str(phone.get("custom_label") or "").strip(),
+            "owner_given_name": str(phone.get("owner_given_name") or "").strip(),
         }
         for phone in contact.get("phones", [])
         if str(phone.get("value") or "").strip()
@@ -307,6 +405,9 @@ def _address_book_pdf_contact_preview(contact: dict) -> dict:
             addresses.append(entry)
     return {
         "name": str(contact.get("name") or contact.get("label") or "CONTACT, Name").strip(),
+        "given_name": str(contact.get("given_name") or "").strip(),
+        "family_name": str(contact.get("family_name") or "").strip(),
+        "mtg_home_elder_flag": str(contact.get("mtg_home_elder_flag") or "").strip(),
         "phones": phones,
         "addresses": addresses,
         "children": list(contact.get("children") or []),
@@ -399,7 +500,7 @@ async def print_address_book_pdf_page(request: Request):
     settings = _address_book_pdf_print_settings(form)
     layout = _address_book_pdf_layout_from_form(form)
     field_list_context = get_field_list_builder_context()
-    fields = _address_book_pdf_fields_for_print(form, field_list_context)
+    fields = _address_book_pdf_fields_for_print(form, field_list_context, settings)
     meeting_preview_payload = json.loads(field_list_context["field_list_meeting_preview_json"])
     pdf_bytes = build_address_book_pdf(
         fields=fields,
@@ -412,16 +513,7 @@ async def print_address_book_pdf_page(request: Request):
         **_address_book_pdf_insert_options_from_form(form),
     )
     filename = address_book_pdf_filename(str(form.get("book_title") or "Address Book"))
-    ADDRESS_BOOK_PDF_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    _address_book_pdf_preview_path(filename).write_bytes(pdf_bytes)
-    notice = "address_book_pdf_created"
-    if _address_book_pdf_can_save_to_drive():
-        notice = "address_book_pdf_uploaded"
-        try:
-            upload_address_book_pdf_to_google_drive(filename, pdf_bytes)
-        except (RuntimeError, HTTPError, URLError):
-            notice = "address_book_pdf_preview_drive_failed"
-    return RedirectResponse(url=f"/address-book/pdf/view/{filename}?preset_id={saved_id}&notice={notice}", status_code=303)
+    return _redirect_after_address_book_pdf_ready(filename, pdf_bytes, saved_id)
 
 
 @router.post("/pdf/print-paper")
@@ -436,7 +528,7 @@ async def print_address_book_paper_page(request: Request):
     settings = _address_book_pdf_print_settings(form)
     layout = _address_book_pdf_layout_from_form(form)
     field_list_context = get_field_list_builder_context()
-    fields = _address_book_pdf_fields_for_print(form, field_list_context)
+    fields = _address_book_pdf_fields_for_print(form, field_list_context, settings)
     meeting_preview_payload = json.loads(field_list_context["field_list_meeting_preview_json"])
     binding = str(form.get("paper_book_binding") or "side_spiral")
     if binding not in {"side_spiral", "top_spiral", "stapled_folded"}:
@@ -459,18 +551,12 @@ async def print_address_book_paper_page(request: Request):
         "stapled_folded": "Stapled_Folded",
     }[binding]
     filename = address_book_pdf_filename(f"{str(form.get('book_title') or 'Address Book')} Printed {binding_label}")
-    ADDRESS_BOOK_PDF_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    _address_book_pdf_preview_path(filename).write_bytes(pdf_bytes)
-    notice = "address_book_pdf_created"
-    if _address_book_pdf_can_save_to_drive():
-        notice = "address_book_pdf_uploaded"
-        try:
-            upload_address_book_printed_pdf_to_google_drive(filename, pdf_bytes)
-        except (RuntimeError, HTTPError, URLError):
-            notice = "address_book_pdf_preview_drive_failed"
-    return RedirectResponse(
-        url=f"/address-book/pdf/view/{filename}?preset_id={saved_id}&notice={notice}&autoprint=1",
-        status_code=303,
+    return _redirect_after_address_book_pdf_ready(
+        filename,
+        pdf_bytes,
+        saved_id,
+        printed=True,
+        autoprint=True,
     )
 
 
@@ -490,10 +576,25 @@ def view_address_book_pdf_page(
         context={
             "filename": path.name,
             "preset_id": preset_id,
+            "notice_key": notice,
             "notice_message": get_notice_message(notice),
             "pdf_cache_bust": int(path.stat().st_mtime),
             "is_editor_session": _address_book_pdf_can_save_to_drive(),
         },
+    )
+
+
+@router.get("/pdf/drive-status/{filename}")
+def address_book_pdf_drive_status(filename: str):
+    job = _address_book_pdf_drive_job_status(filename)
+    notice = str(job.get("notice") or "")
+    return JSONResponse(
+        {
+            "ok": True,
+            "status": str(job.get("status") or "idle"),
+            "notice": notice,
+            "notice_message": get_notice_message(notice) if notice else "",
+        }
     )
 
 

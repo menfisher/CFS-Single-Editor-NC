@@ -1,5 +1,7 @@
+import json
 import sqlite3
 from contextvars import ContextVar
+from datetime import datetime
 from pathlib import Path
 
 from app.config import APP_DATA_DIR, DB_PATH, ERROR_LOG_PATH, MEETING_V2_SCHEMA_PATH, PROJECT_ROOT, SCHEMA_PATH, USE_APP_DATA
@@ -89,6 +91,361 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _sqlite_table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _sqlite_table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+
+
+def _strip_google_shared_suffix_from_stored_names(conn: sqlite3.Connection) -> None:
+    from app.services.google_group_names import (
+        is_retired_catchall_group_name,
+        normalize_group_membership_text,
+        parse_field_meeting_from_group_names,
+        strip_google_shared_suffix,
+        strip_google_shared_suffix_from_joined,
+        usable_shared_contacts_group_name,
+    )
+
+    if _sqlite_table_exists(conn, "contacts"):
+        columns = _sqlite_table_columns(conn, "contacts")
+        if {"fields_text", "meetings_text", "group_membership"} <= columns:
+            rows = conn.execute(
+                "SELECT id, fields_text, meetings_text, group_membership FROM contacts"
+            ).fetchall()
+            for row in rows:
+                fields_text = strip_google_shared_suffix_from_joined(row["fields_text"])
+                meetings_text = strip_google_shared_suffix_from_joined(row["meetings_text"])
+                group_membership = normalize_group_membership_text(row["group_membership"])
+                if is_retired_catchall_group_name(fields_text):
+                    parsed_field, parsed_meeting = parse_field_meeting_from_group_names(
+                        group_membership.split(":::") if group_membership else []
+                    )
+                    if parsed_field and not is_retired_catchall_group_name(parsed_field):
+                        fields_text = parsed_field
+                        if parsed_meeting:
+                            meetings_text = parsed_meeting
+                if (
+                    fields_text == str(row["fields_text"] or "")
+                    and meetings_text == str(row["meetings_text"] or "")
+                    and group_membership == str(row["group_membership"] or "")
+                ):
+                    continue
+                conn.execute(
+                    """
+                    UPDATE contacts
+                    SET fields_text = ?, meetings_text = ?, group_membership = ?
+                    WHERE id = ?
+                    """,
+                    (fields_text, meetings_text, group_membership, int(row["id"])),
+                )
+
+    if _sqlite_table_exists(conn, "contact_assignment_options"):
+        columns = _sqlite_table_columns(conn, "contact_assignment_options")
+        if {"kind", "value"} <= columns:
+            has_parent = "parent_value" in columns
+            select_sql = (
+                "SELECT id, kind, value, parent_value FROM contact_assignment_options"
+                if has_parent
+                else "SELECT id, kind, value FROM contact_assignment_options"
+            )
+            for row in conn.execute(select_sql).fetchall():
+                current_value = str(row["value"] or "")
+                current_parent = str(row["parent_value"] or "") if has_parent else ""
+                new_value = strip_google_shared_suffix(current_value)
+                new_parent = strip_google_shared_suffix(current_parent) if has_parent else ""
+                if (
+                    str(row["kind"] or "").strip().lower() == "field"
+                    and is_retired_catchall_group_name(new_value)
+                    and current_value != new_value
+                ):
+                    conn.execute(
+                        "DELETE FROM contact_assignment_options WHERE id = ?",
+                        (int(row["id"]),),
+                    )
+                    continue
+                if new_value == current_value and new_parent == current_parent:
+                    continue
+                if not new_value:
+                    continue
+                existing = conn.execute(
+                    "SELECT id FROM contact_assignment_options WHERE kind = ? AND value = ? AND id != ?",
+                    (row["kind"], new_value, int(row["id"])),
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        "DELETE FROM contact_assignment_options WHERE id = ?",
+                        (int(row["id"]),),
+                    )
+                    continue
+                if has_parent:
+                    conn.execute(
+                        "UPDATE contact_assignment_options SET value = ?, parent_value = ? WHERE id = ?",
+                        (new_value, new_parent, int(row["id"])),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE contact_assignment_options SET value = ? WHERE id = ?",
+                        (new_value, int(row["id"])),
+                    )
+
+    if _sqlite_table_exists(conn, "book_layout_presets"):
+        columns = _sqlite_table_columns(conn, "book_layout_presets")
+        if "shared_contacts_group_name" in columns:
+            for row in conn.execute("SELECT id, shared_contacts_group_name FROM book_layout_presets").fetchall():
+                cleaned = usable_shared_contacts_group_name(row["shared_contacts_group_name"])
+                if cleaned == str(row["shared_contacts_group_name"] or ""):
+                    continue
+                conn.execute(
+                    "UPDATE book_layout_presets SET shared_contacts_group_name = ? WHERE id = ?",
+                    (cleaned, int(row["id"])),
+                )
+
+    if _sqlite_table_exists(conn, "meeting_sections_v2"):
+        columns = _sqlite_table_columns(conn, "meeting_sections_v2")
+        if {"field_name", "meeting_name"} <= columns:
+            for row in conn.execute("SELECT id, field_name, meeting_name FROM meeting_sections_v2").fetchall():
+                new_field = strip_google_shared_suffix(row["field_name"])
+                new_meeting = strip_google_shared_suffix(row["meeting_name"])
+                if new_field == str(row["field_name"] or "") and new_meeting == str(row["meeting_name"] or ""):
+                    continue
+                if not new_field or not new_meeting:
+                    continue
+                existing = conn.execute(
+                    """
+                    SELECT id FROM meeting_sections_v2
+                    WHERE field_name = ? AND meeting_name = ? AND id != ?
+                    """,
+                    (new_field, new_meeting, int(row["id"])),
+                ).fetchone()
+                if existing:
+                    continue
+                conn.execute(
+                    "UPDATE meeting_sections_v2 SET field_name = ?, meeting_name = ? WHERE id = ?",
+                    (new_field, new_meeting, int(row["id"])),
+                )
+
+    if _sqlite_table_exists(conn, "meeting_toc_exclusions"):
+        columns = _sqlite_table_columns(conn, "meeting_toc_exclusions")
+        if {"field_name", "meeting_name"} <= columns:
+            for row in conn.execute("SELECT field_name, meeting_name FROM meeting_toc_exclusions").fetchall():
+                new_field = strip_google_shared_suffix(row["field_name"])
+                new_meeting = strip_google_shared_suffix(row["meeting_name"])
+                if new_field == str(row["field_name"] or "") and new_meeting == str(row["meeting_name"] or ""):
+                    continue
+                if not new_field or not new_meeting:
+                    continue
+                existing = conn.execute(
+                    """
+                    SELECT 1 FROM meeting_toc_exclusions
+                    WHERE field_name = ? AND meeting_name = ?
+                    """,
+                    (new_field, new_meeting),
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        "DELETE FROM meeting_toc_exclusions WHERE field_name = ? AND meeting_name = ?",
+                        (row["field_name"], row["meeting_name"]),
+                    )
+                    continue
+                conn.execute(
+                    """
+                    UPDATE meeting_toc_exclusions
+                    SET field_name = ?, meeting_name = ?
+                    WHERE field_name = ? AND meeting_name = ?
+                    """,
+                    (new_field, new_meeting, row["field_name"], row["meeting_name"]),
+                )
+
+    if _sqlite_table_exists(conn, "meeting_section_name_options"):
+        columns = _sqlite_table_columns(conn, "meeting_section_name_options")
+        if {"kind", "value"} <= columns:
+            for row in conn.execute("SELECT id, kind, value FROM meeting_section_name_options").fetchall():
+                new_value = strip_google_shared_suffix(row["value"])
+                if not new_value or new_value == str(row["value"] or ""):
+                    continue
+                existing = conn.execute(
+                    "SELECT id FROM meeting_section_name_options WHERE kind = ? AND value = ? AND id != ?",
+                    (row["kind"], new_value, int(row["id"])),
+                ).fetchone()
+                if existing:
+                    conn.execute("DELETE FROM meeting_section_name_options WHERE id = ?", (int(row["id"]),))
+                    continue
+                conn.execute(
+                    "UPDATE meeting_section_name_options SET value = ? WHERE id = ?",
+                    (new_value, int(row["id"])),
+                )
+
+
+def _google_sync_writes_enabled(conn: sqlite3.Connection) -> bool:
+    if not _sqlite_table_exists(conn, "google_sync_state"):
+        return False
+    columns = _sqlite_table_columns(conn, "google_sync_state")
+    if "sync_enabled" not in columns:
+        return False
+    select_parts = ["sync_enabled"]
+    if "multi_editor_enabled" in columns:
+        select_parts.append("multi_editor_enabled")
+    row = conn.execute(
+        f"SELECT {', '.join(select_parts)} FROM google_sync_state WHERE id = 1"
+    ).fetchone()
+    if not row:
+        return False
+    if row["sync_enabled"]:
+        return True
+    return bool("multi_editor_enabled" in columns and row["multi_editor_enabled"])
+
+
+def _rebuild_region_group_memberships(conn: sqlite3.Connection) -> None:
+    """Rewrite every contact's group_membership with the region token, then enqueue diffs."""
+    if not _sqlite_table_exists(conn, "contacts"):
+        return
+    columns = _sqlite_table_columns(conn, "contacts")
+    required = {"id", "fields_text", "meetings_text", "group_membership"}
+    if not required <= columns:
+        return
+
+    from app.services.google_group_names import usable_shared_contacts_group_name
+    from app.services.region_group_names import contact_group_membership_names
+
+    shared_group_name = ""
+    if _sqlite_table_exists(conn, "book_layout_presets"):
+        preset_columns = _sqlite_table_columns(conn, "book_layout_presets")
+        if "shared_contacts_group_name" in preset_columns:
+            preset_row = conn.execute(
+                """
+                SELECT shared_contacts_group_name
+                FROM book_layout_presets
+                WHERE is_default = 1
+                LIMIT 1
+                """
+            ).fetchone()
+            if preset_row:
+                shared_group_name = usable_shared_contacts_group_name(
+                    preset_row["shared_contacts_group_name"]
+                )
+
+    select_parts = [
+        "id",
+        "COALESCE(fields_text, '') AS fields_text",
+        "COALESCE(meetings_text, '') AS meetings_text",
+        "COALESCE(group_membership, '') AS group_membership",
+    ]
+    if "family_name" in columns:
+        select_parts.append("COALESCE(family_name, '') AS family_name")
+    if "given_name" in columns:
+        select_parts.append("COALESCE(given_name, '') AS given_name")
+    if "google_contact_id" in columns:
+        select_parts.append("COALESCE(google_contact_id, '') AS google_contact_id")
+
+    changed_rows: list[dict] = []
+    for row in conn.execute(f"SELECT {', '.join(select_parts)} FROM contacts ORDER BY id").fetchall():
+        item = dict(row)
+        next_membership = ":::".join(
+            contact_group_membership_names(
+                item.get("fields_text"),
+                item.get("meetings_text"),
+                shared_group_name=shared_group_name,
+            )
+        )
+        current_membership = str(item.get("group_membership") or "")
+        if current_membership == next_membership:
+            continue
+        conn.execute(
+            "UPDATE contacts SET group_membership = ? WHERE id = ?",
+            (next_membership, int(item["id"])),
+        )
+        changed_rows.append(
+            {
+                "contact_id": int(item["id"]),
+                "google_contact_id": str(item.get("google_contact_id") or ""),
+                "family_name": str(item.get("family_name") or ""),
+                "given_name": str(item.get("given_name") or ""),
+                "fields_text": str(item.get("fields_text") or "").strip(),
+                "meetings_text": str(item.get("meetings_text") or "").strip(),
+                "group_membership": next_membership,
+                "previous_fields_text": str(item.get("fields_text") or "").strip(),
+                "previous_meetings_text": str(item.get("meetings_text") or "").strip(),
+                "previous_group_membership": current_membership,
+            }
+        )
+
+    if not changed_rows or not _sqlite_table_exists(conn, "google_sync_queue"):
+        return
+    if not _google_sync_writes_enabled(conn):
+        return
+
+    now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for item in changed_rows:
+        conn.execute(
+            """
+            DELETE FROM google_sync_queue
+            WHERE status = 'pending' AND contact_id = ?
+            """,
+            (item["contact_id"],),
+        )
+        conn.execute(
+            """
+            INSERT INTO google_sync_queue (
+              contact_id,
+              google_contact_id,
+              operation,
+              payload_json,
+              status,
+              last_error,
+              updated_at
+            ) VALUES (?, ?, 'update', ?, 'pending', '', ?)
+            """,
+            (
+                item["contact_id"],
+                item["google_contact_id"],
+                json.dumps(
+                    {
+                        "sync_action": "Move",
+                        "family_name": item["family_name"],
+                        "given_name": item["given_name"],
+                        "fields_text": item["fields_text"],
+                        "meetings_text": item["meetings_text"],
+                        "group_membership": item["group_membership"],
+                        "previous_fields_text": item["previous_fields_text"],
+                        "previous_meetings_text": item["previous_meetings_text"],
+                        "previous_group_membership": item["previous_group_membership"],
+                    },
+                    sort_keys=True,
+                ),
+                now_text,
+            ),
+        )
+
+    state_columns = (
+        _sqlite_table_columns(conn, "google_sync_state")
+        if _sqlite_table_exists(conn, "google_sync_state")
+        else set()
+    )
+    if "pending_upload_count" in state_columns:
+        pending_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM google_sync_queue WHERE status = 'pending'"
+        ).fetchone()["count"]
+        assignments = ["pending_upload_count = ?"]
+        values: list = [int(pending_count)]
+        if "needs_upload_reminder" in state_columns:
+            assignments.append("needs_upload_reminder = CASE WHEN ? > 0 THEN 1 ELSE 0 END")
+            values.append(int(pending_count))
+        if "updated_at" in state_columns:
+            assignments.append("updated_at = ?")
+            values.append(now_text)
+        conn.execute(
+            f"UPDATE google_sync_state SET {', '.join(assignments)} WHERE id = 1",
+            tuple(values),
+        )
+
+
 def apply_database_migrations() -> None:
     with get_connection() as conn:
         _apply_database_migrations(conn)
@@ -111,8 +468,10 @@ def _apply_database_migrations(conn: sqlite3.Connection) -> None:
     _ensure_field_list_sync_columns(conn)
     _ensure_address_structured_columns(conn)
     _ensure_phone_code_column(conn)
+    _strip_google_shared_suffix_from_stored_names(conn)
     conn.execute("INSERT OR IGNORE INTO google_sync_accounts (id) VALUES (1)")
     conn.execute("INSERT OR IGNORE INTO google_sync_state (id) VALUES (1)")
+    _rebuild_region_group_memberships(conn)
     _clear_legacy_address_book_pdf_share_defaults(conn)
     conn.execute("INSERT OR IGNORE INTO address_book_settings (id) VALUES (1)")
 
@@ -274,7 +633,7 @@ def _ensure_book_layout_preset_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             ALTER TABLE book_layout_presets
-            ADD COLUMN shared_contacts_group_name TEXT NOT NULL DEFAULT 'TriState Separates (Shared)'
+            ADD COLUMN shared_contacts_group_name TEXT NOT NULL DEFAULT ''
             """
         )
     if "title_font_size_pt" not in columns:
@@ -289,6 +648,13 @@ def _ensure_book_layout_preset_columns(conn: sqlite3.Connection) -> None:
             """
             ALTER TABLE book_layout_presets
             ADD COLUMN toc_font_size_pt REAL NOT NULL DEFAULT 10.0
+            """
+        )
+    if "index_font_size_pt" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE book_layout_presets
+            ADD COLUMN index_font_size_pt REAL NOT NULL DEFAULT 0
             """
         )
 
@@ -729,6 +1095,10 @@ def _ensure_field_list_tables(conn: sqlite3.Connection) -> None:
           manual_palette_items INTEGER NOT NULL DEFAULT 0,
           print_order_mode TEXT NOT NULL DEFAULT 'alphabetical',
           print_order_json TEXT NOT NULL DEFAULT '',
+          meeting_line_height_json TEXT NOT NULL DEFAULT '',
+          meeting_font_size_json TEXT NOT NULL DEFAULT '',
+          field_separator_pages INTEGER NOT NULL DEFAULT 0,
+          double_column_index INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -768,6 +1138,10 @@ def _ensure_field_list_tables(conn: sqlite3.Connection) -> None:
         ("manual_palette_items", "INTEGER", "0"),
         ("print_order_mode", "TEXT", "'alphabetical'"),
         ("print_order_json", "TEXT", "''"),
+        ("meeting_line_height_json", "TEXT", "''"),
+        ("meeting_font_size_json", "TEXT", "''"),
+        ("field_separator_pages", "INTEGER", "0"),
+        ("double_column_index", "INTEGER", "0"),
     ]:
         if settings_columns and column_name not in settings_columns:
             conn.execute(

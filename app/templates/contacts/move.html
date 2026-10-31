@@ -107,6 +107,7 @@
   <script>
     window.addEventListener("DOMContentLoaded", () => {
       const sharedContactsGroupName = {{ shared_contacts_group_name|tojson }};
+      const regionGroupPreview = {{ region_group_preview|default({})|tojson }};
       const fieldSelect = document.getElementById("contact-move-field");
       const meetingSelect = document.getElementById("contact-move-meeting");
       const groupMembershipInput = document.getElementById("contact-move-group-membership");
@@ -279,15 +280,43 @@
       const requestAssignmentOptionDialog = (config) => assignmentModal?.prompt(config) ?? Promise.resolve("");
       const showMessageDialog = (config) => assignmentModal?.message(config) ?? Promise.resolve();
 
-      const updateGroupMembership = () => {
-        if (!fieldSelect || !meetingSelect || !groupMembershipInput) return;
-        const fieldValue = fieldSelect.value.trim();
-        const meetingValue = meetingSelect.value.trim();
-        if (!fieldValue || !meetingValue) {
-          groupMembershipInput.value = "";
-          return;
+      const regionGroupNameForField = (fieldName) => {
+        const preview = regionGroupPreview || {};
+        const cleaned = String(fieldName || "").trim();
+        if (!cleaned) return preview.no_field || "no field";
+        const nccfsFields = preview.nccfs_fields || [];
+        const vacfsFields = preview.vacfs_fields || [];
+        const yearPattern = preview.year_pattern ? new RegExp(preview.year_pattern) : /^[0-9]{4}$/;
+        if (nccfsFields.includes(cleaned) || yearPattern.test(cleaned)) {
+          return preview.nccfs_label || "NCcfs";
         }
-        groupMembershipInput.value = `${fieldValue} - ${meetingValue} (Shared):::${sharedContactsGroupName}:::myContacts`;
+        if (vacfsFields.includes(cleaned)) {
+          return preview.vacfs_label || "VAcfs";
+        }
+        return preview.no_field || "no field";
+      };
+
+      const updateGroupMembership = () => {
+        if (!groupMembershipInput) return;
+        const fieldValue = (fieldSelect?.value || "").trim();
+        const meetingValue = (meetingSelect?.value || "").trim();
+        const stripSharedSuffix = (value) => String(value || "").replace(/\s*\(\s*shared\s*\)\s*$/i, "").trim();
+        const fieldName = stripSharedSuffix(fieldValue);
+        const meetingName = stripSharedSuffix(meetingValue);
+        const catchAllName = stripSharedSuffix(sharedContactsGroupName);
+        const parts = [];
+        if (fieldName && meetingName) {
+          parts.push(`${fieldName} - ${meetingName}`);
+        }
+        const regionName = regionGroupNameForField(fieldName);
+        if (regionName) {
+          parts.push(regionName);
+        }
+        if (catchAllName && catchAllName.toLowerCase() !== "tristate separates") {
+          parts.push(catchAllName);
+        }
+        parts.push("myContacts");
+        groupMembershipInput.value = parts.join(":::");
       };
 
       renderMeetingOptions(fieldSelect?.value || "");

@@ -57,7 +57,7 @@ class SharedGroupRenameTests(unittest.TestCase):
         )
         self.assertEqual(
             next_value,
-            "AL South - Birmingham (Shared):::AlMsLa (Shared):::myContacts",
+            "AL South - Birmingham:::AlMsLa:::myContacts",
         )
 
     def test_apply_rename_updates_local_and_calls_share_without_contact_sync(self) -> None:
@@ -95,17 +95,17 @@ class SharedGroupRenameTests(unittest.TestCase):
         self.assertEqual(result["notice_key"], "shared_group_renamed")
         self.assertEqual(result["local_updated"], 1)
         self.assertEqual(result["resource_name"], "contactGroups/abc")
-        rename_owner.assert_called_once_with("token", "contactGroups/abc", "AlMsLa (Shared)")
+        rename_owner.assert_called_once_with("token", "contactGroups/abc", "AlMsLa")
         rename_share.assert_called_once_with(
             "owner@example.com",
             "contactGroups/abc",
             "TriState Separates (Shared)",
-            "AlMsLa (Shared)",
+            "AlMsLa",
         )
         row = dict(self.conn.execute("SELECT group_membership FROM contacts WHERE id = 1").fetchone())
         self.assertEqual(
             row["group_membership"],
-            "AL South - Birmingham (Shared):::AlMsLa (Shared):::myContacts",
+            "AL South - Birmingham:::AlMsLa:::myContacts",
         )
 
     def test_sync_invite_display_name_posts_same_old_and_new(self) -> None:

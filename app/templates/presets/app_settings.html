@@ -245,12 +245,12 @@
                 type="text"
                 id="shared_contacts_group_name"
                 name="shared_contacts_group_name"
-                value="{{ selected_preset.shared_contacts_group_name or 'TriState Separates (Shared)' }}"
+                value="{{ selected_preset.shared_contacts_group_name or '' }}"
                 maxlength="120"
                 spellcheck="false"
                 autocomplete="off"
               >
-              <p class="muted app-settings-field-help">Used in Google group membership for every shared field/meeting contact, alongside <code>{Field} - {Meeting} (Shared)</code>. Changing this name renames that one Google label in this account and in each account currently sharing it. Contacts are not re-uploaded.</p>
+              <p class="muted app-settings-field-help">Used in Google group membership for every shared field/meeting contact, alongside <code>{Field} - {Meeting}</code>. Changing this name renames that one Google label in this account and in each account currently sharing it. Contacts are not re-uploaded.</p>
             </div>
           </section>
           {% endif %}

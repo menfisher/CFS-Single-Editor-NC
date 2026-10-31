@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.database import fetch_all, fetch_one, get_connection
+from app.services.google_group_names import usable_shared_contacts_group_name
 from app.services.meeting_v2_service import DEFAULT_BOOK_PRESET, ensure_default_book_layout_preset
 
 
@@ -14,7 +15,7 @@ FONT_FAMILY_OPTIONS = [
     "Courier New",
 ]
 
-DEFAULT_SHARED_CONTACTS_GROUP_NAME = "TriState Separates (Shared)"
+DEFAULT_SHARED_CONTACTS_GROUP_NAME = ""
 
 
 def _log_preset_service(message: str) -> None:
@@ -74,6 +75,7 @@ def _default_preset_payload() -> dict:
         "base_font_size_pt": DEFAULT_BOOK_PRESET["base_font_size_pt"],
         "title_font_size_pt": DEFAULT_BOOK_PRESET["title_font_size_pt"],
         "toc_font_size_pt": DEFAULT_BOOK_PRESET["toc_font_size_pt"],
+        "index_font_size_pt": DEFAULT_BOOK_PRESET["index_font_size_pt"],
         "line_height": DEFAULT_BOOK_PRESET["line_height"],
         "meeting_table_column_count": DEFAULT_BOOK_PRESET["meeting_table_column_count"],
         "meeting_table_column_gap_px": DEFAULT_BOOK_PRESET["meeting_table_column_gap_px"],
@@ -104,8 +106,18 @@ def _normalize_preset_row(row) -> dict:
     preset.setdefault("contacts_secondary_row_color", DEFAULT_BOOK_PRESET["meetingdata_secondary_row_color"])
     preset.setdefault("contacts_highlight_row_color", DEFAULT_BOOK_PRESET["meetingdata_highlight_row_color"])
     preset.setdefault("shared_contacts_group_name", DEFAULT_SHARED_CONTACTS_GROUP_NAME)
+    preset["shared_contacts_group_name"] = usable_shared_contacts_group_name(
+        preset.get("shared_contacts_group_name")
+    )
     preset.setdefault("title_font_size_pt", DEFAULT_BOOK_PRESET["title_font_size_pt"])
     preset.setdefault("toc_font_size_pt", DEFAULT_BOOK_PRESET["toc_font_size_pt"])
+    preset.setdefault("index_font_size_pt", DEFAULT_BOOK_PRESET["index_font_size_pt"])
+    try:
+        index_font_size = float(preset.get("index_font_size_pt") or 0)
+    except (TypeError, ValueError):
+        index_font_size = 0.0
+    if index_font_size <= 0:
+        preset["index_font_size_pt"] = preset.get("toc_font_size_pt") or DEFAULT_BOOK_PRESET["index_font_size_pt"]
     preset["metrics"] = _metrics_for_preset(preset)
     return preset
 
@@ -121,8 +133,7 @@ def get_shared_contacts_group_name() -> str:
         LIMIT 1
         """
     )
-    name = str((row or {}).get("shared_contacts_group_name") or "").strip()
-    return name or DEFAULT_SHARED_CONTACTS_GROUP_NAME
+    return usable_shared_contacts_group_name(str((row or {}).get("shared_contacts_group_name") or "").strip())
 
 
 def list_book_layout_presets() -> list[dict]:
@@ -204,6 +215,20 @@ def save_book_layout_preset(preset_id: int | None, values: dict) -> int:
         )
     else:
         toc_font_size_pt = max(1.0, _coerce_float(toc_font_raw, DEFAULT_BOOK_PRESET["toc_font_size_pt"]))
+    index_font_raw = values.get("index_font_size_pt")
+    if index_font_raw is None or str(index_font_raw).strip() == "":
+        index_font_size_pt = max(
+            1.0,
+            _coerce_float(
+                (existing_preset or {}).get("index_font_size_pt"),
+                _coerce_float(
+                    (existing_preset or {}).get("toc_font_size_pt"),
+                    DEFAULT_BOOK_PRESET["index_font_size_pt"],
+                ),
+            ),
+        )
+    else:
+        index_font_size_pt = max(1.0, _coerce_float(index_font_raw, DEFAULT_BOOK_PRESET["index_font_size_pt"]))
     line_height = max(0.5, _coerce_float(values.get("line_height"), 1.2))
     column_count = max(8, _coerce_int(values.get("meeting_table_column_count"), 28))
     column_gap_px = max(0, _coerce_int(values.get("meeting_table_column_gap_px"), 6))
@@ -216,7 +241,9 @@ def save_book_layout_preset(preset_id: int | None, values: dict) -> int:
     contacts_primary_row_color = str(values.get("contacts_primary_row_color") or DEFAULT_BOOK_PRESET["meetingdata_primary_row_color"]).strip() or DEFAULT_BOOK_PRESET["meetingdata_primary_row_color"]
     contacts_secondary_row_color = str(values.get("contacts_secondary_row_color") or DEFAULT_BOOK_PRESET["meetingdata_secondary_row_color"]).strip() or DEFAULT_BOOK_PRESET["meetingdata_secondary_row_color"]
     contacts_highlight_row_color = str(values.get("contacts_highlight_row_color") or DEFAULT_BOOK_PRESET["meetingdata_highlight_row_color"]).strip() or DEFAULT_BOOK_PRESET["meetingdata_highlight_row_color"]
-    shared_contacts_group_name = str(values.get("shared_contacts_group_name") or DEFAULT_SHARED_CONTACTS_GROUP_NAME).strip() or DEFAULT_SHARED_CONTACTS_GROUP_NAME
+    shared_contacts_group_name = usable_shared_contacts_group_name(
+        str(values.get("shared_contacts_group_name") or "").strip()
+    )
     is_default = 1 if str(values.get("is_default") or "") in {"1", "true", "on", "yes"} else 0
 
     with get_connection() as conn:
@@ -236,6 +263,7 @@ def save_book_layout_preset(preset_id: int | None, values: dict) -> int:
             base_font_size_pt,
             title_font_size_pt,
             toc_font_size_pt,
+            index_font_size_pt,
             line_height,
             column_count,
             column_gap_px,
@@ -267,6 +295,7 @@ def save_book_layout_preset(preset_id: int | None, values: dict) -> int:
               base_font_size_pt = ?,
               title_font_size_pt = ?,
               toc_font_size_pt = ?,
+              index_font_size_pt = ?,
               line_height = ?,
               meeting_table_column_count = ?,
               meeting_table_column_gap_px = ?,
@@ -323,6 +352,7 @@ def save_book_layout_preset(preset_id: int | None, values: dict) -> int:
                   base_font_size_pt,
                   title_font_size_pt,
                   toc_font_size_pt,
+                  index_font_size_pt,
                   line_height,
                   meeting_table_column_count,
                   meeting_table_column_gap_px,
@@ -337,7 +367,7 @@ def save_book_layout_preset(preset_id: int | None, values: dict) -> int:
                   contacts_highlight_row_color,
                   shared_contacts_group_name,
                   is_default
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 params,
             )

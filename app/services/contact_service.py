@@ -12,6 +12,12 @@ from zoneinfo import ZoneInfo
 
 from app.database import fetch_all, fetch_one, get_connection
 from app.services.address_format import enrich_address_parts
+from app.services.google_group_names import (
+    RETIRED_CATCHALL_GROUP_NAME,
+    strip_google_shared_suffix,
+    strip_google_shared_suffix_from_joined,
+    usable_shared_contacts_group_name,
+)
 from app.services.google_sync_service import (
     get_current_editor_initials,
     mark_contacts_manifest_for_drive_export,
@@ -33,7 +39,6 @@ CONTACT_ROW_COLOR_DEFAULTS = {
 EDIT_LOG_DISPLAY_TIMEZONE = ZoneInfo("America/Chicago")
 EDIT_LOG_RETENTION_MONTHS = 6
 LOCAL_CONTACT_PHOTO_PREFIX = "/static/uploads/contact_photos/"
-LEGACY_SHARED_GROUP_NAME = "TriState Separates (Shared)"
 ASSIGNMENT_MENU_SENTINELS = {
     "__add_field__",
     "__add_meeting__",
@@ -88,14 +93,9 @@ def _strip_trailing_parenthetical(value: str) -> str:
 
 
 def build_contact_group_membership(field_value: str, meeting_value: str) -> str:
-    field_name = str(field_value or "").strip()
-    meeting_name = str(meeting_value or "").strip()
-    if not field_name or not meeting_name:
-        return ""
-    from app.services.preset_service import get_shared_contacts_group_name
+    from app.services.region_group_names import contact_group_membership_names
 
-    shared_group_name = get_shared_contacts_group_name()
-    return f"{field_name} - {meeting_name} (Shared):::{shared_group_name}:::myContacts"
+    return ":::".join(contact_group_membership_names(field_value, meeting_value))
 
 
 def _map_url(address_text: str | None, coordinates: str | None) -> str:
@@ -202,8 +202,8 @@ def _collect_saved_assignment_options(kind: str) -> list[str]:
 
 def add_contact_assignment_option(kind: str, value: str, parent_value: str = "") -> str:
     normalized_kind = str(kind or "").strip().lower()
-    normalized_value = str(value or "").strip()
-    normalized_parent_value = str(parent_value or "").strip()
+    normalized_value = strip_google_shared_suffix(str(value or "").strip())
+    normalized_parent_value = strip_google_shared_suffix(str(parent_value or "").strip())
     if normalized_kind not in {"field", "meeting"}:
         raise ValueError("Invalid assignment option kind.")
     if not normalized_value:
@@ -448,7 +448,7 @@ def delete_contact_assignment_option(kind: str, value: str) -> str:
 def rename_contact_assignment_option(kind: str, old_value: str, new_value: str) -> dict:
     normalized_kind = str(kind or "").strip().lower()
     normalized_old_value = str(old_value or "").strip()
-    normalized_new_value = str(new_value or "").strip()
+    normalized_new_value = strip_google_shared_suffix(str(new_value or "").strip())
     if normalized_kind not in {"field", "meeting"}:
         raise ValueError("Invalid assignment option kind.")
     if not normalized_old_value:
@@ -590,6 +590,14 @@ def rename_contact_assignment_option(kind: str, old_value: str, new_value: str) 
     if removed_meetingdata_sections or renamed_meetingdata_sections:
         mark_meetingdata_for_drive_export()
 
+    from app.services.field_list_service import (
+        remap_meeting_font_size_assignments,
+        remap_meeting_line_height_assignments,
+    )
+
+    remap_meeting_line_height_assignments(normalized_kind, normalized_old_value, normalized_new_value)
+    remap_meeting_font_size_assignments(normalized_kind, normalized_old_value, normalized_new_value)
+
     return {
         "old_value": normalized_old_value,
         "new_value": normalized_new_value,
@@ -707,8 +715,8 @@ def get_contact_filter_options() -> dict:
     meetings_by_field: dict[str, list[str]] = {}
 
     for row in rows:
-        row_fields = _split_text_list(row["fields_text"])
-        row_meetings = _split_text_list(row["meetings_text"])
+        row_fields = _split_text_list(strip_google_shared_suffix_from_joined(row["fields_text"]))
+        row_meetings = _split_text_list(strip_google_shared_suffix_from_joined(row["meetings_text"]))
 
         for field_name in row_fields:
             if field_name not in field_seen:
@@ -1074,8 +1082,8 @@ def list_contacts_for_field_list_print() -> list[dict]:
 
     for contact in contacts:
         contact_id = int(contact["id"])
-        contact["fields_list"] = _split_text_list(contact.get("fields_text"))
-        contact["meetings_list"] = _split_text_list(contact.get("meetings_text"))
+        contact["fields_list"] = _split_text_list(strip_google_shared_suffix_from_joined(contact.get("fields_text")))
+        contact["meetings_list"] = _split_text_list(strip_google_shared_suffix_from_joined(contact.get("meetings_text")))
         contact["relationships"] = relationships_by_contact.get(contact_id, [])
         contact["phones"] = phones_by_contact.get(contact_id, [])
         contact["addresses"] = addresses_by_contact.get(contact_id, [])
@@ -1093,7 +1101,7 @@ def build_empty_contact() -> dict:
         "do_not_print": 0,
         "fields_text": "",
         "meetings_text": "",
-        "group_membership": "",
+        "group_membership": build_contact_group_membership("", ""),
         "family_name": "",
         "given_name": "",
         "photo": "",
@@ -1125,6 +1133,8 @@ def get_contact_detail(contact_id: int) -> dict | None:
         return None
 
     contact = dict(contact_row)
+    contact["fields_text"] = strip_google_shared_suffix_from_joined(contact.get("fields_text"))
+    contact["meetings_text"] = strip_google_shared_suffix_from_joined(contact.get("meetings_text"))
     contact["fields_list"] = _split_text_list(contact.get("fields_text"))
     contact["meetings_list"] = _split_text_list(contact.get("meetings_text"))
     normalized_group_membership = build_contact_group_membership(contact.get("fields_text"), contact.get("meetings_text"))
@@ -1300,18 +1310,29 @@ def permanently_delete_contact(contact_id: int) -> bool:
         return False
 
     google_contact_id = str(contact.get("google_contact_id") or "").strip()
+    from app.services.region_group_names import REGION_GROUP_NAMES
+
     group_names = [
         item.strip()
         for item in str(contact.get("group_membership") or "").split(":::")
         if item.strip()
     ]
-    field_name = str(contact.get("fields_text") or "").strip()
-    meeting_name = str(contact.get("meetings_text") or "").strip()
+    field_name = strip_google_shared_suffix(str(contact.get("fields_text") or "").strip())
+    meeting_name = strip_google_shared_suffix(str(contact.get("meetings_text") or "").strip())
     if field_name and meeting_name:
         from app.services.preset_service import get_shared_contacts_group_name
 
+        shared_group_name = usable_shared_contacts_group_name(get_shared_contacts_group_name())
+        group_names.append(f"{field_name} - {meeting_name}")
         group_names.append(f"{field_name} - {meeting_name} (Shared)")
-        group_names.append(get_shared_contacts_group_name())
+        if shared_group_name:
+            group_names.append(shared_group_name)
+            group_names.append(f"{shared_group_name} (Shared)")
+        group_names.append(RETIRED_CATCHALL_GROUP_NAME)
+        group_names.append(f"{RETIRED_CATCHALL_GROUP_NAME} (Shared)")
+    for region_name in REGION_GROUP_NAMES:
+        group_names.append(region_name)
+        group_names.append(f"{region_name} (Shared)")
     group_names.append("myContacts")
     deduped_group_names = []
     seen_group_names = set()
@@ -1361,6 +1382,8 @@ def move_contacts(contact_ids: list[int], field_value: str, meeting_value: str) 
         if not detail:
             continue
 
+        # Same Field+Meeting is still a Move: rebuild clean Group Membership
+        # (region token, no ``(Shared)``) and queue a Google update.
         next_status = str(detail.get("status") or "")
         if meeting_value.strip().lower() == "deleted":
             next_status = "deleted"
@@ -1974,8 +1997,8 @@ def update_contact(contact_id: int, payload: dict, *, queue_google_sync: bool = 
         "last_updated": _clean_text(payload.get("last_updated")),
         "status": _clean_text(payload.get("status")),
         "do_not_print": 1 if str(payload.get("do_not_print") or "").lower() in {"1", "true", "yes", "on"} else 0,
-        "fields_text": _clean_text(payload.get("fields_text")),
-        "meetings_text": _clean_text(payload.get("meetings_text")),
+        "fields_text": strip_google_shared_suffix_from_joined(_clean_text(payload.get("fields_text"))),
+        "meetings_text": strip_google_shared_suffix_from_joined(_clean_text(payload.get("meetings_text"))),
         "group_membership": "",
         "family_name": _clean_text(payload.get("family_name")),
         "given_name": _clean_text(payload.get("given_name")),
@@ -2440,8 +2463,8 @@ def create_contact(payload: dict) -> int:
         "last_updated": _clean_text(payload.get("last_updated")),
         "status": _clean_text(payload.get("status")),
         "do_not_print": 1 if str(payload.get("do_not_print") or "").lower() in {"1", "true", "yes", "on"} else 0,
-        "fields_text": _clean_text(payload.get("fields_text")),
-        "meetings_text": _clean_text(payload.get("meetings_text")),
+        "fields_text": strip_google_shared_suffix_from_joined(_clean_text(payload.get("fields_text"))),
+        "meetings_text": strip_google_shared_suffix_from_joined(_clean_text(payload.get("meetings_text"))),
         "group_membership": "",
         "family_name": _clean_text(payload.get("family_name")),
         "given_name": _clean_text(payload.get("given_name")),

@@ -278,6 +278,10 @@ CREATE TABLE IF NOT EXISTS address_book_settings (
   manual_palette_items INTEGER NOT NULL DEFAULT 0,
   print_order_mode TEXT NOT NULL DEFAULT 'alphabetical',
   print_order_json TEXT NOT NULL DEFAULT '',
+  meeting_line_height_json TEXT NOT NULL DEFAULT '',
+  meeting_font_size_json TEXT NOT NULL DEFAULT '',
+  field_separator_pages INTEGER NOT NULL DEFAULT 0,
+  double_column_index INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
