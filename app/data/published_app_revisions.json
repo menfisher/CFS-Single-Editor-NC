@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.250",
+      "version": "1.251",
+      "date_display": "10/30/2026",
+      "description": "Address Book: Field separators, two-column Index + Index size, leader dots, cover preview, preview-before-Drive, per-meeting Size/Line spacing, Acrobat-editable PDFs, print-page layout. Contacts/Google: custom-field round-trip; strip (Shared); remove TriState Separates; NCcfs/VAcfs/no field membership; Upload uses clean Field-Meeting labels."
+    },
+    {
       "date_display": "10/28/2026",
+      "version": "1.250",
       "description": "Print new page only appears on Field-list table-start rows, and the Order/Kind toolbar is tighter to read."
     },
     {
