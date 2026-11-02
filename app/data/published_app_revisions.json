@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.251",
+      "version": "1.252",
+      "date_display": "11/1/2026",
+      "description": "Field separator pages have their own Size and a live Separator Page preview, with a shorter Field separator page checkbox. South Carolina Field maps to SCcfs, and an empty Field maps to VAcfs."
+    },
+    {
       "date_display": "10/30/2026",
+      "version": "1.251",
       "description": "Address Book: Field separators, two-column Index + Index size, leader dots, cover preview, preview-before-Drive, per-meeting Size/Line spacing, Acrobat-editable PDFs, print-page layout. Contacts/Google: custom-field round-trip; strip (Shared); remove TriState Separates; NCcfs/VAcfs/no field membership; Upload uses clean Field-Meeting labels."
     },
     {
