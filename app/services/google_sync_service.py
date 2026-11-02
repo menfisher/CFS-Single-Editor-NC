@@ -9941,7 +9941,7 @@ def _contact_person_payload(contact: dict) -> dict:
     return payload
 
 
-def _desired_group_names(contact: dict) -> list[str]:
+def _desired_group_names(contact: dict, extra_group_titles: list[str] | None = None) -> list[str]:
     from app.services.google_group_names import (
         google_group_names_equivalent,
         has_google_shared_suffix,
@@ -9957,7 +9957,12 @@ def _desired_group_names(contact: dict) -> list[str]:
     values = _split_group_membership_text(contact.get("group_membership"))
     field_name = strip_google_shared_suffix(_clean(contact.get("fields_text")))
     meeting_name = strip_google_shared_suffix(_clean(contact.get("meetings_text")))
-    canonical_names = contact_group_membership_names(field_name, meeting_name)
+    extra_labels = [*values, *(extra_group_titles or [])]
+    canonical_names = contact_group_membership_names(
+        field_name,
+        meeting_name,
+        extra_labels=extra_labels,
+    )
     values = [
         strip_google_shared_suffix(value)
         for value in values
@@ -10342,12 +10347,69 @@ def _cleanup_empty_app_contact_groups(
     resource_to_name: dict[str, str],
     name_to_resource: dict[str, str],
 ) -> None:
+    from app.services.google_group_names import (
+        has_google_shared_suffix,
+        is_retired_catchall_group_name,
+    )
+
     group_resources = [
         resource_name
         for resource_name, group_name in resource_to_name.items()
-        if _clean(group_name).endswith("(Shared)")
+        if (
+            is_retired_catchall_group_name(group_name)
+            or has_google_shared_suffix(group_name)
+        )
+        and not _is_system_contact_group_resource(resource_name, resource_to_name)
     ]
     _cleanup_empty_contact_group_resources(access_token, group_resources, resource_to_name, name_to_resource)
+
+
+def _google_group_titles_for_person(person: dict, resource_to_name: dict[str, str]) -> list[str]:
+    titles: list[str] = []
+    seen: set[str] = set()
+    for resource_name in _extract_contact_group_memberships(person):
+        title = _clean(resource_to_name.get(resource_name))
+        key = title.casefold()
+        if not title or key in seen:
+            continue
+        seen.add(key)
+        titles.append(title)
+    return titles
+
+
+def _canonical_contact_group_membership(
+    contact: dict,
+    extra_group_titles: list[str] | None = None,
+) -> str:
+    from app.services.region_group_names import contact_group_membership_names
+
+    extras = [
+        *_split_group_membership_text(contact.get("group_membership")),
+        *(extra_group_titles or []),
+    ]
+    return ":::".join(
+        contact_group_membership_names(
+            contact.get("fields_text"),
+            contact.get("meetings_text"),
+            extra_labels=extras,
+        )
+    )
+
+
+def _persist_inferred_group_membership(
+    conn,
+    contact: dict,
+    extra_group_titles: list[str] | None = None,
+) -> str:
+    next_membership = _canonical_contact_group_membership(contact, extra_group_titles)
+    contact_id = int(contact.get("id") or 0)
+    if contact_id and next_membership != str(contact.get("group_membership") or ""):
+        conn.execute(
+            "UPDATE contacts SET group_membership = ? WHERE id = ?",
+            (next_membership, contact_id),
+        )
+        contact["group_membership"] = next_membership
+    return next_membership
 
 
 def _previous_group_names_from_payload(payload: dict) -> list[str]:
@@ -10376,8 +10438,8 @@ def _previous_group_names_from_payload(payload: dict) -> list[str]:
         for label in extra_labels:
             values.append(f"{label} (Shared)")
         values.extend(shared_group_names)
-        values.append(RETIRED_CATCHALL_GROUP_NAME)
-        values.append(f"{RETIRED_CATCHALL_GROUP_NAME} (Shared)")
+    values.append(RETIRED_CATCHALL_GROUP_NAME)
+    values.append(f"{RETIRED_CATCHALL_GROUP_NAME} (Shared)")
     for region_name in REGION_GROUP_NAMES:
         values.append(region_name)
         values.append(f"{region_name} (Shared)")
@@ -10532,7 +10594,6 @@ def _process_upsert_queue_entry(
 
     queue_payload = _safe_load_json(queue_entry.get("payload_json"))
     person_payload = _contact_person_payload(contact)
-    desired_group_names = _desired_group_names(contact)
     google_contact_id = _clean(contact.get("google_contact_id"))
 
     if google_contact_id:
@@ -10546,6 +10607,10 @@ def _process_upsert_queue_entry(
                 raise
     else:
         current_person = {}
+
+    google_titles = _google_group_titles_for_person(current_person, resource_to_name)
+    _persist_inferred_group_membership(conn, contact, extra_group_titles=google_titles)
+    desired_group_names = _desired_group_names(contact, extra_group_titles=google_titles)
 
     if not google_contact_id:
         created = _api_json_request(
@@ -11632,6 +11697,7 @@ def upload_google_contacts(
 ) -> int:
     ensure_google_sync_records()
     access_token, account_email = _get_valid_access_token()
+    resource_to_name, name_to_resource = _contact_groups_lookup(access_token)
 
     with get_connection() as conn:
         pending_rows = [
@@ -11661,8 +11727,6 @@ def upload_google_contacts(
             _clear_last_sync_error(conn)
             conn.commit()
         return 0
-
-    resource_to_name, name_to_resource = _contact_groups_lookup(access_token)
     processed = 0
     total_count = len(pending_rows)
     uploaded_google_contact_ids: list[str] = []
@@ -11683,6 +11747,15 @@ def upload_google_contacts(
     group_sync_batch: dict[str, dict[str, set[str]]] = {}
     processed_upsert_queue_ids: list[int] = []
     for queue_entry in pending_rows:
+        queue_id = int(queue_entry.get("id") or 0)
+        if queue_id:
+            with get_connection() as conn:
+                still_pending = conn.execute(
+                    "SELECT 1 FROM google_sync_queue WHERE id = ? AND status = 'pending'",
+                    (queue_id,),
+                ).fetchone()
+            if not still_pending:
+                continue
         payload = _safe_load_json(queue_entry.get("payload_json"))
         current_contact_name = _format_queue_contact_name(queue_entry, payload)
         quota_attempt = 1
@@ -11844,6 +11917,7 @@ def upload_google_contacts(
             conn.commit()
         try:
             _flush_google_contact_group_batch(access_token, group_sync_batch, resource_to_name, name_to_resource)
+            _cleanup_empty_app_contact_groups(access_token, resource_to_name, name_to_resource)
         except Exception as exc:
             group_sync_error = _clean(str(exc)) or "Google contact group update failed."
 
@@ -12315,7 +12389,10 @@ def get_google_upload_progress() -> dict:
         notice = "upload_in_progress"
     elif last_error and _looks_like_reconnect_error(last_error):
         notice = "upload_not_connected"
-    elif last_error and (pending_count > 0 or any_drive_export_needed):
+    elif last_error and (
+        pending_count > 0
+        or any_drive_export_needed
+    ):
         notice = "upload_failed"
     elif processed_count > 0 and pending_count == 0 and not any_drive_export_needed:
         notice = "upload_success"

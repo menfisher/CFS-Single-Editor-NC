@@ -347,14 +347,20 @@ def _rebuild_region_group_memberships(conn: sqlite3.Connection) -> None:
     changed_rows: list[dict] = []
     for row in conn.execute(f"SELECT {', '.join(select_parts)} FROM contacts ORDER BY id").fetchall():
         item = dict(row)
+        current_membership = str(item.get("group_membership") or "")
+        extra_labels = [
+            chunk.strip()
+            for chunk in current_membership.replace(";", ":::").split(":::")
+            if chunk.strip()
+        ]
         next_membership = ":::".join(
             contact_group_membership_names(
                 item.get("fields_text"),
                 item.get("meetings_text"),
                 shared_group_name=shared_group_name,
+                extra_labels=extra_labels,
             )
         )
-        current_membership = str(item.get("group_membership") or "")
         if current_membership == next_membership:
             continue
         conn.execute(
@@ -1098,6 +1104,7 @@ def _ensure_field_list_tables(conn: sqlite3.Connection) -> None:
           meeting_line_height_json TEXT NOT NULL DEFAULT '',
           meeting_font_size_json TEXT NOT NULL DEFAULT '',
           field_separator_pages INTEGER NOT NULL DEFAULT 0,
+          field_separator_font_size_pt REAL NOT NULL DEFAULT 0,
           double_column_index INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1141,6 +1148,7 @@ def _ensure_field_list_tables(conn: sqlite3.Connection) -> None:
         ("meeting_line_height_json", "TEXT", "''"),
         ("meeting_font_size_json", "TEXT", "''"),
         ("field_separator_pages", "INTEGER", "0"),
+        ("field_separator_font_size_pt", "REAL", "0"),
         ("double_column_index", "INTEGER", "0"),
     ]:
         if settings_columns and column_name not in settings_columns:

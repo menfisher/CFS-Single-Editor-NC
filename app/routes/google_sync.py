@@ -582,6 +582,7 @@ def google_upload_start():
                 "ok": False,
                 "notice": notice,
                 "message": get_notice_message(notice),
+                "last_error": str(exc),
             },
             status_code=400,
             headers={"Cache-Control": "no-store"},

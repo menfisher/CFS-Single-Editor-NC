@@ -760,6 +760,9 @@
           return status;
         }
         if (!Boolean(status.in_progress) && !hasPendingUploadWork(status) && ["upload_failed", "upload_pending"].includes(String(status.notice || ""))) {
+          if (String(status.last_error || "").trim()) {
+            return { ...status, notice: "upload_failed" };
+          }
           return {
             ...status,
             notice: Number(status.processed_count || 0) > 0 ? "upload_success" : "upload_queue_empty",
@@ -1914,7 +1917,7 @@
           });
           const payload = await response.json();
           if (!response.ok || !payload.ok) {
-            await finishUploadInPlace(payload.notice || "upload_failed");
+            await finishUploadInPlace(payload);
             return;
           }
           if (payload.in_progress || payload.started) {

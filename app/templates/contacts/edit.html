@@ -1554,10 +1554,14 @@
       const regionGroupNameForField = (fieldName) => {
         const preview = regionGroupPreview || {};
         const cleaned = String(fieldName || "").trim();
-        if (!cleaned) return preview.no_field || "no field";
+        if (!cleaned) return preview.empty_field_label || preview.vacfs_label || "VAcfs";
         const nccfsFields = preview.nccfs_fields || [];
+        const sccfsFields = preview.sccfs_fields || [];
         const vacfsFields = preview.vacfs_fields || [];
         const yearPattern = preview.year_pattern ? new RegExp(preview.year_pattern) : /^[0-9]{4}$/;
+        if (sccfsFields.includes(cleaned)) {
+          return preview.sccfs_label || "SCcfs";
+        }
         if (nccfsFields.includes(cleaned) || yearPattern.test(cleaned)) {
           return preview.nccfs_label || "NCcfs";
         }

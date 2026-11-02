@@ -18,6 +18,11 @@ def strip_google_shared_suffix(value: str | None) -> str:
     return _GOOGLE_SHARED_SUFFIX.sub("", text).strip()
 
 
+def _normalized_google_group_title_key(value: str | None) -> str:
+    """Case-fold a group title after stripping `` (Shared)`` and extra spaces."""
+    return " ".join(strip_google_shared_suffix(value).split()).casefold()
+
+
 def has_google_shared_suffix(value: str | None) -> bool:
     """True when the Google label title itself ends in `` (Shared)``."""
     text = str(value or "").strip()
@@ -26,7 +31,7 @@ def has_google_shared_suffix(value: str | None) -> bool:
 
 def is_retired_catchall_group_name(value: str | None) -> bool:
     """True for the retired all-contacts Google group, with or without `` (Shared)``."""
-    return strip_google_shared_suffix(value).casefold() == RETIRED_CATCHALL_GROUP_NAME.casefold()
+    return _normalized_google_group_title_key(value) == RETIRED_CATCHALL_GROUP_NAME.casefold()
 
 
 def usable_shared_contacts_group_name(value: str | None) -> str:

@@ -22,6 +22,8 @@ from app.services.google_sync_service import (
     _parse_field_meeting,
     _parse_field_meeting_from_organizations,
     _shared_group_membership_names,
+    start_google_upload_job,
+    upload_google_contacts,
 )
 
 
@@ -302,6 +304,23 @@ class WriteGroupMembershipWithoutSharedTests(unittest.TestCase):
             "contactGroups/shared",
         )
 
+    def test_shared_twin_is_not_reused_as_clean_field_meeting(self) -> None:
+        resource_to_name = {
+            "contactGroups/shared": "Western Virginia - CHARLOTTESVILLE, VA (Shared)",
+        }
+        name_to_resource = {
+            "Western Virginia - CHARLOTTESVILLE, VA (Shared)": "contactGroups/shared",
+            "Western Virginia - CHARLOTTESVILLE, VA": "contactGroups/shared",
+        }
+        self.assertEqual(
+            _lookup_contact_group_resource(
+                "Western Virginia - CHARLOTTESVILLE, VA",
+                name_to_resource,
+                resource_to_name,
+            ),
+            "",
+        )
+
 
 class StoredSharedSuffixMigrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -396,6 +415,63 @@ class StoredSharedSuffixMigrationTests(unittest.TestCase):
                 ).fetchone()
             )
             self.assertEqual(preset["shared_contacts_group_name"], "")
+
+
+class EmptyQueueUploadDoesNotDiscoverLeftoversTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(self._tempdir.name) / "app.sqlite3")
+        initialize_database()
+        ensure_default_book_layout_preset()
+
+    def tearDown(self) -> None:
+        set_request_db_path(None)
+        self._tempdir.cleanup()
+
+    def test_start_upload_job_does_not_enqueue_when_queue_empty(self) -> None:
+        with get_connection() as conn:
+            conn.execute("UPDATE google_sync_state SET sync_enabled = 1 WHERE id = 1")
+            conn.commit()
+        with (
+            patch("app.services.google_sync_service._get_valid_access_token") as get_token,
+            patch("app.services.google_sync_service._contact_groups_lookup") as lookup,
+        ):
+            result = start_google_upload_job()
+        get_token.assert_not_called()
+        lookup.assert_not_called()
+        self.assertFalse(result["started"])
+        self.assertEqual(result["pending_count"], 0)
+        with get_connection() as conn:
+            queued = conn.execute(
+                "SELECT COUNT(*) AS count FROM google_sync_queue WHERE status = 'pending'"
+            ).fetchone()["count"]
+        self.assertEqual(queued, 0)
+
+    def test_upload_google_contacts_does_not_list_leftover_groups(self) -> None:
+        with get_connection() as conn:
+            conn.execute("UPDATE google_sync_state SET sync_enabled = 1 WHERE id = 1")
+            conn.commit()
+        with (
+            patch(
+                "app.services.google_sync_service._get_valid_access_token",
+                return_value=("token", "user@example.com"),
+            ),
+            patch(
+                "app.services.google_sync_service._contact_groups_lookup",
+                return_value=({"contactGroups/tristate": "TriState Separates"}, {}),
+            ),
+            patch(
+                "app.services.google_sync_service._contact_group_member_state",
+                side_effect=AssertionError("leftover member listing should not run"),
+            ),
+        ):
+            processed = upload_google_contacts(finish_progress=True, skip_share_sync=True)
+        self.assertEqual(processed, 0)
+        with get_connection() as conn:
+            queued = conn.execute(
+                "SELECT COUNT(*) AS count FROM google_sync_queue WHERE status = 'pending'"
+            ).fetchone()["count"]
+        self.assertEqual(queued, 0)
 
 
 if __name__ == "__main__":

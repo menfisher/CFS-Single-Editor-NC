@@ -281,6 +281,7 @@ CREATE TABLE IF NOT EXISTS address_book_settings (
   meeting_line_height_json TEXT NOT NULL DEFAULT '',
   meeting_font_size_json TEXT NOT NULL DEFAULT '',
   field_separator_pages INTEGER NOT NULL DEFAULT 0,
+  field_separator_font_size_pt REAL NOT NULL DEFAULT 0,
   double_column_index INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

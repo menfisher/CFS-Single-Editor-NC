@@ -21,7 +21,9 @@ from app.services.address_book_pdf_service import (
     _separator_phone_text,
     _text_width,
     build_address_book_pdf,
+    field_separator_row,
 )
+from app.services.field_list_service import get_address_book_settings, save_address_book_settings
 
 
 _LAYOUT = {
@@ -425,6 +427,56 @@ class FieldSeparatorPageTests(unittest.TestCase):
         self.assertLess(birmingham[2], right_edge - 3)
         self.assertFalse(tall_verticals(meeting_page))
 
+    def test_separator_font_size_changes_meeting_text(self) -> None:
+        def birmingham_height(size: float) -> float:
+            document = fitz.open(
+                stream=_build(
+                    {
+                        "field_separator_pages": 1,
+                        "field_separator_font_size_pt": size,
+                    }
+                ),
+                filetype="pdf",
+            )
+            page = next(
+                item
+                for item in document
+                if "AL Central" in item.get_text()
+                and "Birmingham" in item.get_text()
+                and "Ada Lovelace" not in item.get_text()
+                and "Table of Contents" not in item.get_text()
+            )
+            word = next(item for item in page.get_text("words") if item[4] == "Birmingham")
+            return word[3] - word[1]
+
+        self.assertGreater(birmingham_height(16), birmingham_height(8) + 2)
+
+    def test_separator_font_size_persists(self) -> None:
+        save_address_book_settings({"field_separator_pages": 1, "field_separator_font_size_pt": 16})
+        settings = get_address_book_settings()
+        self.assertEqual(int(settings["field_separator_pages"]), 1)
+        self.assertAlmostEqual(float(settings["field_separator_font_size_pt"]), 16)
+
+    def test_preview_payload_includes_separator_row(self) -> None:
+        previewed = _address_book_pdf_fields_from_context(
+            {"field_list_picker_json": json.dumps({"fields": _fields()})}
+        )
+        row = previewed[0]["meetings"][0]["separator"]
+        self.assertEqual(row["meeting_name"], "Birmingham")
+        self.assertEqual(row["elder_name"], "Mark Graham")
+        self.assertEqual(row["phone"], "205-555-1212")
+
+    def test_print_page_has_separator_size_and_preview_controls(self) -> None:
+        html = Path("app/templates/address_book/pdf.html").read_text()
+        js = Path("app/static/js/address_book_pdf.js").read_text()
+        self.assertIn('name="field_separator_font_size_pt"', html)
+        self.assertIn("address-book-pdf-field-separator-font-size", html)
+        self.assertIn("Separator Page", html)
+        self.assertIn("Field separator page", html)
+        self.assertIn("ADDRESS_BOOK_PDF_SEPARATOR_PAGE_VALUE", js)
+        self.assertIn("renderAddressBookPdfSeparatorPreview", js)
+        self.assertIn("has-separator-preview", js)
+
     def test_separator_prefers_elder_over_meeting_home(self) -> None:
         meeting = _home_and_elder_picker_fields()[0]["meetings"][0]
         elder = _separator_elder_contact(meeting)
@@ -565,3 +617,10 @@ class FieldSeparatorPageTests(unittest.TestCase):
         self.assertLess(long_titles[1]["x1"], right_frame - 2)
         self.assertEqual(len(short_titles), 1)
         self.assertEqual(short_titles[0]["text"].strip(), f"{short_name} {_FIELD_SEPARATOR_CONTINUED_LABEL}")
+
+    def test_separator_row_uses_elder_mobile(self) -> None:
+        row = field_separator_row(_fields()[0]["meetings"][0])
+        self.assertEqual(row["meeting_name"], "Birmingham")
+        self.assertEqual(row["elder_name"], "Mark Graham")
+        self.assertEqual(row["phone"], "205-555-1212")
+        self.assertIsNone(field_separator_row({"name": "Workers", "is_field_end_list": True}))
