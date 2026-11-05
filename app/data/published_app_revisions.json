@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.252",
+      "version": "1.253",
+      "date_display": "11/5/2026",
+      "description": "Google Notes use real line breaks without CFS pb/pa codes, and meeting headings can print the meeting home in parentheses."
+    },
+    {
       "date_display": "11/1/2026",
+      "version": "1.252",
       "description": "Field separator pages have their own Size and a live Separator Page preview, with a shorter Field separator page checkbox. South Carolina Field maps to SCcfs, and an empty Field maps to VAcfs."
     },
     {
