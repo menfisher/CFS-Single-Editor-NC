@@ -150,7 +150,7 @@ def _address_book_pdf_fields_from_context(field_list_context: dict, *, preview_l
     def meeting_payload(meeting: dict) -> dict:
         contacts = list(meeting.get("contacts", []))
         preview_contacts = contacts[:preview_limit] if preview_limit is not None else contacts
-        home_last_name = meeting.get("home_last_name") or _address_book_pdf_meeting_home_last_name(contacts)
+        home_last_name = _address_book_pdf_meeting_home_last_name(contacts) or meeting.get("home_last_name")
         enriched = {
             **meeting,
             "home_last_name": home_last_name,
@@ -267,6 +267,7 @@ def _address_book_pdf_settings_from_form(form) -> dict:
         "meeting_line_height_json": form.get("meeting_line_height_json"),
         "meeting_font_size_json": form.get("meeting_font_size_json"),
         "meeting_page_mode": form.get("meeting_page_mode"),
+        "print_meeting_home_after_meeting": form.get("print_meeting_home_after_meeting"),
         "field_separator_pages": form.get("field_separator_pages"),
         "field_separator_font_size_pt": form.get("field_separator_font_size_pt"),
         "double_column_index": form.get("double_column_index"),

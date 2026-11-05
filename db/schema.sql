@@ -283,6 +283,7 @@ CREATE TABLE IF NOT EXISTS address_book_settings (
   field_separator_pages INTEGER NOT NULL DEFAULT 0,
   field_separator_font_size_pt REAL NOT NULL DEFAULT 0,
   double_column_index INTEGER NOT NULL DEFAULT 0,
+  print_meeting_home_after_meeting INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

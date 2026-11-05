@@ -272,17 +272,26 @@ def matching_contacts_meetings(meeting_name: object, meetings: list[dict]) -> li
     return matched
 
 
-def _meeting_heading(meeting_name: str, home_last_name: object = "") -> str:
+def _meeting_display_base_name(meeting_name: str) -> str:
     name = _clean(meeting_name)
     if not name:
         return name
     paren_match = re.match(r"^(.+?)\s+\(([^)]+)\)\s*$", name)
-    if paren_match:
-        base = paren_match.group(1).strip()
-        surname = paren_match.group(2).strip().upper()
-        return f"{base} ({surname})"
-    home_name = _clean(home_last_name).upper()
-    return f"{name} ({home_name})" if home_name else name
+    return paren_match.group(1).strip() if paren_match else name
+
+
+def _meeting_paren_surname(meeting_name: str) -> str:
+    name = _clean(meeting_name)
+    paren_match = re.match(r"^(.+?)\s+\(([^)]+)\)\s*$", name)
+    return paren_match.group(2).strip().upper() if paren_match else ""
+
+
+def _meeting_heading(meeting_name: str, home_last_name: object = "", *, include_home: bool = False) -> str:
+    base = _meeting_display_base_name(meeting_name)
+    if not include_home:
+        return base
+    home_name = _person_name_case(home_last_name)
+    return f"{base} ({home_name})" if home_name else base
 
 
 _FIELD_SEPARATOR_TITLE_INSET_PT = 0.375 * 72.0
@@ -294,11 +303,7 @@ _PAGE_FRAME_BOTTOM_INSET_PT = 16.0
 
 
 def _meeting_base_name(meeting_name: str, home_last_name: object = "") -> str:
-    heading = _meeting_heading(meeting_name, home_last_name)
-    paren_match = re.match(r"^(.+?)\s+\(([^)]+)\)\s*$", heading)
-    if paren_match:
-        return paren_match.group(1).strip()
-    return heading
+    return _meeting_display_base_name(meeting_name)
 
 
 def _contact_flag_value(contact: dict) -> str:
@@ -333,9 +338,7 @@ def _separator_elder_contact(meeting: dict) -> dict | None:
     for contact in contacts:
         if _contact_flag_value(contact).startswith("1"):
             return contact
-    heading = _meeting_heading(_clean(meeting.get("name")), meeting.get("home_last_name"))
-    paren_match = re.match(r"^(.+?)\s+\(([^)]+)\)\s*$", heading)
-    surname = paren_match.group(2).strip().upper() if paren_match else _clean(meeting.get("home_last_name")).upper()
+    surname = _clean(meeting.get("home_last_name")).upper() or _meeting_paren_surname(meeting.get("name"))
     if not surname:
         return None
     for contact in contacts:
@@ -2916,6 +2919,7 @@ def build_address_book_pdf(
     except (TypeError, ValueError):
         field_separator_font_size = 0.0
     double_column_index = bool(settings.get("double_column_index"))
+    print_meeting_home_after = bool(settings.get("print_meeting_home_after_meeting"))
     include_bible_study = bool(settings.get("include_bible_study_union_info", 1))
 
     writer = _PdfWriter(
@@ -3345,7 +3349,11 @@ def build_address_book_pdf(
         for meeting in field_meetings:
             if _is_field_end_list_meeting(meeting):
                 continue
-            meeting_name = _meeting_base_name(_clean(meeting.get("name")), meeting.get("home_last_name"))
+            meeting_name = _meeting_heading(
+                _clean(meeting.get("name")),
+                meeting.get("home_last_name"),
+                include_home=print_meeting_home_after,
+            )
             if not meeting_name:
                 continue
             elder = _separator_elder_contact(meeting)
@@ -3469,7 +3477,11 @@ def build_address_book_pdf(
             meeting_name = _clean(meeting.get("name"))
             if not prints_on_its_own_page(meeting):
                 continue
-            heading = _meeting_heading(meeting_name, meeting.get("home_last_name"))
+            heading = _meeting_heading(
+                meeting_name,
+                meeting.get("home_last_name"),
+                include_home=print_meeting_home_after,
+            )
             is_field_end_list = _is_field_end_list_meeting(meeting)
             is_last_meeting = meeting_index == last_printable_index and field is ordered_fields[-1]
             if pack_complete_meetings and _page_content_lines():

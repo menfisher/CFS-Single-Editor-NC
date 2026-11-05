@@ -13,6 +13,10 @@ function addressBookPdfFieldSeparatorPagesEnabled() {
   return Boolean(document.querySelector('[name="field_separator_pages"]')?.checked);
 }
 
+function addressBookPdfPrintMeetingHomeAfter() {
+  return Boolean(document.querySelector('[name="print_meeting_home_after_meeting"]')?.checked);
+}
+
 function addressBookPdfPreviewIsSeparatorPage() {
   const fieldSelect = document.querySelector("[data-address-book-pdf-field-picker]");
   const meetingSelect = document.querySelector("[data-address-book-pdf-meeting-picker]");
@@ -1267,17 +1271,28 @@ function syncAddressBookPdfCoverForPreviewPickers() {
   syncAddressBookPdfCoverChoiceVisibility();
 }
 
-function addressBookPdfMeetingHeading(meetingName, homeLastName = "") {
+function addressBookPdfMeetingDisplayBaseName(meetingName) {
   const name = String(meetingName || "").trim();
   if (!name) return name;
   const parenMatch = name.match(/^(.+?)\s+\(([^)]+)\)\s*$/);
-  if (parenMatch) {
-    const base = parenMatch[1].trim();
-    const surname = parenMatch[2].trim().toUpperCase();
-    return `${base} (${surname})`;
+  return parenMatch ? parenMatch[1].trim() : name;
+}
+
+function addressBookPdfMeetingHomeDisplayName(homeLastName) {
+  const home = String(homeLastName || "").trim();
+  if (!home) return "";
+  const letters = home.replace(/[^A-Za-z]/g, "");
+  if (letters && letters === letters.toUpperCase()) {
+    return home.toLowerCase().replace(/(^|[^a-zA-Z0-9])([a-zA-Z0-9])/g, (_, prefix, ch) => prefix + ch.toUpperCase());
   }
-  const homeName = String(homeLastName || "").trim().toUpperCase();
-  return homeName ? `${name} (${homeName})` : name;
+  return home;
+}
+
+function addressBookPdfMeetingHeading(meetingName, homeLastName = "") {
+  const base = addressBookPdfMeetingDisplayBaseName(meetingName);
+  if (!base || !addressBookPdfPrintMeetingHomeAfter()) return base;
+  const homeName = addressBookPdfMeetingHomeDisplayName(homeLastName);
+  return homeName ? `${base} (${homeName})` : base;
 }
 
 function findAddressBookPdfMeetingPreviewRows(meetingName, fieldName) {
@@ -1524,7 +1539,11 @@ function updateAddressBookPdfPageLabels() {
       meetingTitle.textContent = "All Meetings";
     }
   } else if (meetingTitle) {
-    meetingTitle.textContent = meetingName;
+    const field = getAddressBookPdfOrderedFields().find((item) => item.name === fieldName);
+    const selectedMeeting = (field?.meetings || []).find((meeting) => meeting.name === meetingName);
+    meetingTitle.textContent = selectedMeeting
+      ? addressBookPdfMeetingHeading(selectedMeeting.name, selectedMeeting.home_last_name)
+      : addressBookPdfMeetingHeading(meetingName);
   }
   if (pageFooter) pageFooter.textContent = `${fieldName} - Page 1`;
 }
@@ -1754,7 +1773,14 @@ function renderAddressBookPdfSeparatorPreview(list) {
   const biblePreview = document.querySelector("[data-address-book-pdf-bible-preview]");
   if (biblePreview) biblePreview.innerHTML = "";
   const rows = (field?.meetings || [])
-    .map((meeting) => meeting.separator)
+    .map((meeting) => {
+      const row = meeting.separator;
+      if (!row || !row.meeting_name) return null;
+      return {
+        ...row,
+        meeting_name: addressBookPdfMeetingHeading(meeting.name, meeting.home_last_name),
+      };
+    })
     .filter((row) => row && row.meeting_name);
   const titleHtml = `<div class="address-book-pdf-separator-title">${escapeAddressBookPdfHtml(fieldName)}</div>`;
   if (!rows.length) {
