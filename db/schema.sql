@@ -225,8 +225,7 @@ CREATE TABLE IF NOT EXISTS contact_edit_log_entries (
   contact_name TEXT NOT NULL,
   label_name TEXT NOT NULL,
   original_text TEXT NOT NULL DEFAULT '',
-  edited_text TEXT NOT NULL DEFAULT '',
-  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+  edited_text TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS app_revisions (

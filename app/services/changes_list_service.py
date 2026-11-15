@@ -64,30 +64,92 @@ def normalize_changes_list_entry(item: dict, *, sort_order: int = 0) -> dict:
     }
 
 
+def _normalize_date_for_key(value: str) -> str:
+    """Stable Automatic Date for merge keys (padding, initials case, spacing)."""
+    text = _normalize_stored_timestamp(str(value or "").strip())
+    parts = [part.strip() for part in text.split(",")]
+    if len(parts) != 3 or "/" not in parts[1]:
+        return " ".join(text.split()).casefold()
+    date_parts = parts[1].split("/")
+    if len(date_parts) != 3:
+        return " ".join(text.split()).casefold()
+    try:
+        month = int(date_parts[0])
+        day = int(date_parts[1])
+    except ValueError:
+        return " ".join(text.split()).casefold()
+    return f"{parts[0].casefold()}, {month:02d}/{day:02d}/{date_parts[2]}, {parts[2]}"
+
+
+def _normalize_name_for_key(value: str) -> str:
+    return " ".join(str(value or "").strip().split()).casefold()
+
+
 def _normalize_changes_text_for_key(changes_text: str) -> str:
     """Stable text for merge keys across desktop/mobile/Drive copies of one edit."""
-    body = _changes_text_for_diff(str(changes_text or ""))
     # Drive and SQLite often disagree on CR vs LF for the same Pending Edit.
-    body = body.replace("\r\n", "\n").replace("\r", "\n")
-    lines = [line.rstrip() for line in body.split("\n")]
-    return "\n".join(lines).strip()
+    # Hidden <input> values also turn newlines into spaces when Completed edit(s)
+    # saves the row, so collapse all whitespace to keep that copy matched.
+    body = str(changes_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    return re.sub(r"\s+", " ", body).strip()
+
+
+def _strip_completed_by_prefix(changes_text: str, completed_by: str) -> str:
+    """Remove only this row's Completed edit(s) initials, not guessed 'nw -' / 'Delete -' prefixes."""
+    text = str(changes_text or "")
+    initials = str(completed_by or "").strip()
+    if not initials:
+        return text
+    prefix = f"{initials} - "
+    if text.lower().startswith(prefix.lower()):
+        return text[len(prefix) :]
+    compact = text.strip()
+    compact_key = compact.casefold()
+    if compact_key in {initials.casefold(), f"{initials.casefold()} -"}:
+        return ""
+    return text
+
+
+def _changes_body_for_merge(entry: dict) -> str:
+    """Identity body for merge/twin keys. Incomplete rows keep their full text."""
+    text = str(entry.get("changes_text") or "")
+    completed_by = str(entry.get("completed_by") or "").strip()
+    if completed_by:
+        text = _strip_completed_by_prefix(text, completed_by)
+    return _normalize_changes_text_for_key(text)
 
 
 def _changes_list_entry_key(entry: dict) -> tuple[str, str, str]:
-    # Ignore the "Cv - " completion prefix so completed/incomplete copies of the
-    # same Pending Edits row merge instead of duplicating.
+    # Ignore the stored Completed edit(s) initials prefix so green/white copies
+    # of the same Pending Edits row merge. Do not guess prefixes on white rows.
     return (
-        str(entry.get("automatic_date") or "").strip(),
-        str(entry.get("name_event") or "").strip(),
-        _normalize_changes_text_for_key(str(entry.get("changes_text") or "")),
+        _normalize_date_for_key(str(entry.get("automatic_date") or "")),
+        _normalize_name_for_key(str(entry.get("name_event") or "")),
+        _changes_body_for_merge(entry),
+    )
+
+
+def _completion_twin_key(entry: dict) -> tuple[str, str]:
+    """Match a green completed row to its white Drive/mobile copy even if dates differ."""
+    return (
+        _normalize_name_for_key(str(entry.get("name_event") or "")),
+        _changes_body_for_merge(entry),
     )
 
 
 def _entry_merge_rank(entry: dict) -> tuple[int, int, str]:
     """Higher rank wins when two sources describe the same Pending Edits row."""
-    completed = 1 if str(entry.get("completed_by") or "").strip() else 0
-    prefix, _body = _split_completed_prefix(str(entry.get("changes_text") or ""))
-    has_prefix = 1 if prefix else 0
+    completed_by = str(entry.get("completed_by") or "").strip()
+    completed = 1 if completed_by else 0
+    text = str(entry.get("changes_text") or "").strip()
+    has_prefix = 0
+    if completed_by:
+        prefix = f"{completed_by} - "
+        if text.lower().startswith(prefix.lower()) or text.casefold() in {
+            completed_by.casefold(),
+            f"{completed_by.casefold()} -",
+        }:
+            has_prefix = 1
     return (completed, has_prefix, str(entry.get("completed_at") or "").strip())
 
 
@@ -144,7 +206,41 @@ def merge_changes_list_entry_lists(*sources: object) -> list[dict]:
             # Prefer Editor-completed rows over older incomplete copies from Drive/mobile.
             if _entry_merge_rank(entry) > _entry_merge_rank(existing):
                 merged_by_key[key] = entry
-    return sort_changes_list_entries_newest_first([merged_by_key[key] for key in key_order])
+    return _drop_incomplete_twins_of_completed(
+        sort_changes_list_entries_newest_first([merged_by_key[key] for key in key_order])
+    )
+
+
+def _drop_incomplete_twins_of_completed(entries: list[dict]) -> list[dict]:
+    """Remove white copies of a row that Completed edit(s) already marked green."""
+    completed_twins = {
+        _completion_twin_key(entry)
+        for entry in entries
+        if str(entry.get("completed_by") or "").strip()
+    }
+    if not completed_twins:
+        return entries
+    kept = [
+        entry
+        for entry in entries
+        if str(entry.get("completed_by") or "").strip()
+        or _completion_twin_key(entry) not in completed_twins
+    ]
+    if len(kept) == len(entries):
+        return entries
+    return sort_changes_list_entries_newest_first(kept)
+
+
+def retain_completed_changes_list_entries(merged: list[dict], local: list[dict]) -> list[dict]:
+    """Keep local green Completed edit(s) rows even if Drive keys failed to match."""
+    completed_local = [
+        entry
+        for entry in local
+        if isinstance(entry, dict) and str(entry.get("completed_by") or "").strip()
+    ]
+    if not completed_local:
+        return merge_changes_list_entry_lists(merged)
+    return merge_changes_list_entry_lists(merged, completed_local)
 
 
 def changes_list_entries_equal(left: object, right: object) -> bool:
@@ -413,7 +509,7 @@ def update_changes_entry(entry_id: int, *, name_event: str, changes_text: str, i
     with get_connection() as conn:
         existing = conn.execute(
             """
-            SELECT id, automatic_date
+            SELECT id, automatic_date, name_event, changes_text, completed_by
             FROM changes_list_entries
             WHERE id = ?
             """,
@@ -422,6 +518,16 @@ def update_changes_entry(entry_id: int, *, name_event: str, changes_text: str, i
         if not existing:
             return {}
         automatic_date = str(existing["automatic_date"] or "")
+        existing_changes_text = str(existing["changes_text"] or "")
+        # Browsers flatten newlines in hidden inputs. Don't replace a stored
+        # completed/multi-line body with a whitespace-only variant of itself.
+        if (
+            cleaned_changes_text
+            and existing_changes_text
+            and _normalize_changes_text_for_key(cleaned_changes_text)
+            == _normalize_changes_text_for_key(existing_changes_text)
+        ):
+            cleaned_changes_text = existing_changes_text
         if not cleaned_name_event and not cleaned_changes_text:
             automatic_date = ""
         elif not automatic_date and (cleaned_name_event or cleaned_changes_text):
@@ -759,14 +865,42 @@ def export_changes_list_payload() -> list[dict]:
     return list_changes_entries()
 
 
+def _content_signatures(entries: list[dict]) -> list[tuple[str, str, str, str]]:
+    signatures = [
+        (*_changes_list_entry_key(entry), str(entry.get("completed_by") or "").strip())
+        for entry in entries
+        if _entry_has_content(entry)
+    ]
+    return sorted(signatures)
+
+
 def dedupe_local_changes_list_entries() -> bool:
     """Collapse completed/incomplete duplicates left by older Drive merges (e.g. CR vs LF)."""
     ensure_changes_list_entries()
     current = [entry for entry in list_changes_entries() if _entry_has_content(entry)]
     merged = merge_changes_list_entry_lists(current)
-    if changes_list_entries_equal(merged, current):
+    if _content_signatures(merged) == _content_signatures(current):
         return False
-    return replace_changes_list_from_payload(merged)
+    replaced = replace_changes_list_from_payload(merged)
+    if replaced:
+        mark_changes_list_for_drive_export()
+    return replaced
+
+
+def local_changes_list_missing_from_payload(uploaded_entries: object) -> bool:
+    """True when local Completed edit(s) are not in the payload about to be written to Drive."""
+    uploaded = uploaded_entries if isinstance(uploaded_entries, list) else []
+    uploaded_completed_keys = {
+        _changes_list_entry_key(normalize_changes_list_entry(entry))
+        for entry in uploaded
+        if isinstance(entry, dict) and str(entry.get("completed_by") or "").strip()
+    }
+    for entry in export_changes_list_payload():
+        if not str(entry.get("completed_by") or "").strip():
+            continue
+        if _changes_list_entry_key(entry) not in uploaded_completed_keys:
+            return True
+    return False
 
 
 def replace_changes_list_from_payload(entries: object) -> bool:

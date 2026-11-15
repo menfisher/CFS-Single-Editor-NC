@@ -1355,7 +1355,26 @@ def permanently_delete_contact(contact_id: int) -> bool:
             },
         )
 
+    contact_name = (
+        _format_contact_name(contact.get("family_name"), contact.get("given_name"))
+        or f"Contact {contact_id}"
+    )
+    assignment = " - ".join(part for part in (field_name, meeting_name) if part) or "Deleted"
+    editor_initials = get_current_editor_initials() or "SE"
     with get_connection() as conn:
+        _store_contact_edit_entries(
+            conn,
+            contact_id,
+            contact_name,
+            editor_initials,
+            [
+                {
+                    "label_name": "Contact",
+                    "original_text": assignment,
+                    "edited_text": "Permanently deleted",
+                }
+            ],
+        )
         conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
         conn.commit()
     mark_contacts_manifest_for_drive_export()
@@ -1417,6 +1436,17 @@ def _clean_text(value: str | None) -> str:
     return str(value or "").strip()
 
 
+_EDIT_LOG_BREAK = re.compile(r"<br\s*/?>|</(?:div|p)\s*>", re.IGNORECASE)
+_EDIT_LOG_BLOCK_OPEN = re.compile(r"<(?:div|p)[^>]*>", re.IGNORECASE)
+
+
+def _normalize_edit_log_line_breaks(value: object) -> str:
+    """Treat Notes HTML breaks as the same line breaks stored from Google/plain text."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _EDIT_LOG_BLOCK_OPEN.sub("", text)
+    return _EDIT_LOG_BREAK.sub("\n", text)
+
+
 def _is_local_contact_photo(photo_url: str | None) -> bool:
     return _clean_text(photo_url).startswith(LOCAL_CONTACT_PHOTO_PREFIX)
 
@@ -1451,7 +1481,7 @@ def _next_shared_drive_sync_fields(existing_contact: dict | None) -> dict:
 
 
 def _clean_compare_text(value: str | None) -> str:
-    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _normalize_edit_log_line_breaks(value)
     lines = [line.strip() for line in text.strip().split("\n")]
     return "\n".join(lines)
 
@@ -1844,10 +1874,11 @@ def list_contact_edit_batches() -> list[dict]:
             batches.append(batch)
             batch_lookup[batch_id] = batch
 
+        original_display = _normalize_edit_log_line_breaks(row["original_text"]).strip()
         batch["entries"].append(
             {
                 "label_name": str(row["label_name"] or ""),
-                "original_text": str(row["original_text"] or "") if str(row["original_text"] or "").strip() else "blank",
+                "original_text": original_display if original_display else "blank",
                 "edited_text_html": _build_contact_edit_highlight_html(row["original_text"], row["edited_text"]),
             }
         )
@@ -1932,8 +1963,8 @@ def _build_single_line_edit_highlight_html(original: str, edited: str) -> str:
 
 
 def _build_contact_edit_highlight_html(original_text: object, edited_text: object) -> str:
-    original = str(original_text or "")
-    edited = str(edited_text or "")
+    original = _normalize_edit_log_line_breaks(original_text)
+    edited = _normalize_edit_log_line_breaks(edited_text)
     if not edited.strip():
         return '<mark class="meeting-edit-highlight">blank</mark>'
     if original == edited:

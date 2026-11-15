@@ -5996,6 +5996,19 @@ def _drive_manifest_id_sets_look_incompatible(local_ids: set[int], remote_ids: s
     return overlap * 2 < local_count
 
 
+def _drive_manifest_has_foreign_id_space(local_ids, remote_ids) -> bool:
+    """True when Drive contact IDs are a different set than this CFS database.
+
+    Leftover shared-contact files can publish a large manifest whose IDs do not
+    overlap local cards. Treating those as deletes wipes CFS to 0 contacts.
+    """
+    local = {int(contact_id) for contact_id in (local_ids or []) if int(contact_id or 0) > 0}
+    remote = {int(contact_id) for contact_id in (remote_ids or []) if int(contact_id or 0) > 0}
+    if len(local) < _LOCAL_CONTACT_PRUNE_GUARD_MIN_COUNT or not remote:
+        return False
+    return not (local & remote)
+
+
 def import_shared_contacts_from_google_drive(
     *,
     access_token: str | None = None,
@@ -6012,8 +6025,6 @@ def import_shared_contacts_from_google_drive(
     summary = get_google_sync_summary()
     local_contacts_revision = _normalize_sync_revision((summary.get("state") or {}).get("contacts_sync_revision"))
     remote_contacts_revision = _normalize_sync_revision(sync_state.get("contacts_sync_revision"))
-    if remote_contacts_revision > 0 and remote_contacts_revision == local_contacts_revision:
-        return True
     with get_connection() as conn:
         local_contact_count = _count_contacts(conn)
         previous_photo_state = {
@@ -6029,6 +6040,12 @@ def import_shared_contacts_from_google_drive(
                 """
             ).fetchall()
         }
+    if (
+        remote_contacts_revision > 0
+        and remote_contacts_revision == local_contacts_revision
+        and local_contact_count > 0
+    ):
+        return True
     payload = _drive_load_json_file_content(token, resolved_storage["contacts_current_file_id"])
     if isinstance(payload, dict) and payload.get("tables"):
         backup_rows = (payload.get("tables") or {}).get("contacts") or []
@@ -6047,15 +6064,19 @@ def import_shared_contacts_from_google_drive(
         _import_changed_contact_photos_from_google_drive(token, previous_photo_state)
         return True
 
-    if not isinstance(payload, dict) or str(payload.get("format") or "").strip() != "contactsfreeshare.shared_contacts.v2":
-        if local_contact_count <= 0 and _clean(resolved_storage.get("contacts_full_file_id")):
-            full_payload = _drive_load_json_file_content(token, resolved_storage["contacts_full_file_id"])
-            if isinstance(full_payload, dict) and full_payload.get("tables"):
+    if local_contact_count <= 0 and _clean(resolved_storage.get("contacts_full_file_id")):
+        full_payload = _drive_load_json_file_content(token, resolved_storage["contacts_full_file_id"])
+        if isinstance(full_payload, dict) and full_payload.get("tables"):
+            backup_rows = (full_payload.get("tables") or {}).get("contacts") or []
+            backup_count = len(backup_rows) if isinstance(backup_rows, list) else 0
+            if backup_count > 0:
                 restore_contacts_backup_payload(full_payload, restore_files=False)
                 if remote_contacts_revision > 0:
                     _store_local_sync_revisions(contacts_sync_revision=remote_contacts_revision)
                 _import_changed_contact_photos_from_google_drive(token, previous_photo_state)
                 return True
+
+    if not isinstance(payload, dict) or str(payload.get("format") or "").strip() != "contactsfreeshare.shared_contacts.v2":
         export_shared_contacts_to_google_drive()
         return False
 
@@ -6076,6 +6097,16 @@ def import_shared_contacts_from_google_drive(
         if isinstance(item, dict) and int(item.get("id") or 0) > 0
     ]
     remote_ids = {int(item["id"]) for item in remote_contacts}
+    if _drive_manifest_has_foreign_id_space(local_revision_by_id, remote_ids):
+        _LOGGER.warning(
+            "Skipped Drive shared-contacts import because none of %s local contact IDs "
+            "appear in the Drive manifest (%s entries). Keeping local contacts.",
+            local_contact_count,
+            len(remote_contacts),
+        )
+        if remote_contacts_revision > 0:
+            _store_local_sync_revisions(contacts_sync_revision=remote_contacts_revision)
+        return True
     # Only Drive-ahead contacts need import. Local-ahead mismatches used to be counted
     # every sign-in, then skipped without updating revisions, so the same set (e.g. 162)
     # kept reappearing forever.
@@ -7800,7 +7831,10 @@ def export_changes_list_to_google_drive(
 ) -> None:
     from app.services.changes_list_service import (
         export_changes_list_payload,
+        local_changes_list_missing_from_payload,
+        mark_changes_list_for_drive_export,
         merge_changes_list_entry_lists,
+        retain_completed_changes_list_entries,
     )
 
     token = access_token or _get_valid_access_token()[0]
@@ -7819,8 +7853,14 @@ def export_changes_list_to_google_drive(
     # open Pending Edits page (Completed Edit(s) stops updating after the first tap).
     if merge_remote:
         remote_payload = _drive_load_json_file_content(token, resolved_storage["changes_list_current_file_id"])
+        # Completed edit(s) can land while Drive is downloading. Re-read so the
+        # uploaded file keeps the green rows instead of the stale white copies.
+        local_entries = export_changes_list_payload()
         if isinstance(remote_payload, dict) and isinstance(remote_payload.get("entries"), list):
-            local_entries = merge_changes_list_entry_lists(remote_payload["entries"], local_entries)
+            local_entries = retain_completed_changes_list_entries(
+                merge_changes_list_entry_lists(remote_payload["entries"], local_entries),
+                local_entries,
+            )
     payload = {
         "format": "contactsfreeshare.changes_list.v1",
         "exported_at": _iso_now(),
@@ -7832,14 +7872,17 @@ def export_changes_list_to_google_drive(
     _store_local_sync_revisions(changes_list_sync_revision=next_revision)
     _store_drive_state(last_drive_export_at=_now_text(), last_sync_error="")
     with get_connection() as conn:
-        conn.execute(
-            """
-            UPDATE google_sync_state
-            SET changes_list_needs_drive_export = 0, updated_at = ?
-            WHERE id = 1
-            """,
-            (_now_text(),),
-        )
+        if local_changes_list_missing_from_payload(local_entries):
+            mark_changes_list_for_drive_export(conn)
+        else:
+            conn.execute(
+                """
+                UPDATE google_sync_state
+                SET changes_list_needs_drive_export = 0, updated_at = ?
+                WHERE id = 1
+                """,
+                (_now_text(),),
+            )
         conn.commit()
 
 
@@ -7875,6 +7918,7 @@ def import_changes_list_from_google_drive(
         merge_changes_list_entry_lists,
         reconcile_pending_edits_upload_flags,
         replace_changes_list_from_payload,
+        retain_completed_changes_list_entries,
     )
 
     # Hold the export lock so a background Completed Edit(s) upload cannot race
@@ -7909,7 +7953,12 @@ def import_changes_list_from_google_drive(
         local_entries = export_changes_list_payload()
         # Prefer completed local rows over stale incomplete Drive copies, while still
         # picking up new remote Pending Edits from other editors/devices.
-        merged_entries = merge_changes_list_entry_lists(remote_entries or [], local_entries)
+        # Re-read after the Drive download so Completed edit(s) during that wait
+        # cannot be replaced by the white snapshot taken before they turned green.
+        merged_entries = retain_completed_changes_list_entries(
+            merge_changes_list_entry_lists(remote_entries or [], local_entries),
+            export_changes_list_payload(),
+        )
 
         if remote_revision > 0 and remote_revision == local_revision:
             if changes_list_entries_equal(merged_entries, local_entries):
