@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.253",
+      "version": "1.254",
+      "date_display": "11/14/2026",
+      "description": "Sign-in keeps the local contact book when Drive IDs differ, Pending Edits completed rows stay green, and permanent deletes are recorded on the Contacts Edit list."
+    },
+    {
       "date_display": "11/5/2026",
+      "version": "1.253",
       "description": "Google Notes use real line breaks without CFS pb/pa codes, and meeting headings can print the meeting home in parentheses."
     },
     {
