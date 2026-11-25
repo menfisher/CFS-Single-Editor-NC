@@ -1535,10 +1535,18 @@ window.addEventListener("DOMContentLoaded", () => {
     return effective > 0 ? effective : 0;
   };
 
+  const meetingPreviewRowLineHeight = (row) => {
+    const value = Number(row?.line_height || 0);
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return Math.max(0.8, Math.min(3, value));
+  };
+
   const renderMeetingPreviewRow = (row) => {
     const rowFontSizePt = meetingPreviewRowFontSizePt(row);
+    const rowLineHeight = meetingPreviewRowLineHeight(row);
     const rowStyle = [
       rowFontSizePt ? `--meeting-row-font-size: ${rowFontSizePt.toFixed(2)}pt` : "",
+      rowLineHeight ? `--meeting-row-line-height: ${rowLineHeight.toFixed(2)}` : "",
       `--meeting-grid-column-gap: ${Math.max(0, Math.min(48, Number(row.column_gap_px || 6)))}px`,
     ].filter(Boolean).join("; ");
     const styleAttr = rowStyle ? ` style="${rowStyle}"` : "";

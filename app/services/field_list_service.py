@@ -3298,7 +3298,9 @@ def _meeting_preview_row_style(row: dict[str, Any]) -> str:
     except (TypeError, ValueError):
         line_height = 0.0
     if line_height > 0:
-        declarations.append(f"line-height: {max(0.8, min(3.0, line_height)):.2f}")
+        clamped_line_height = max(0.8, min(3.0, line_height))
+        declarations.append(f"line-height: {clamped_line_height:.2f}")
+        declarations.append(f"--meeting-row-line-height: {clamped_line_height:.2f}")
     column_gap = _coerce_int(row.get("column_gap_px"), 6, 0, 48)
     declarations.append(f"--meeting-grid-column-gap: {column_gap}px")
     return "; ".join(declarations)
@@ -4847,12 +4849,24 @@ main {{
   text-decoration: underline;
 }}
 .print-field-list-meeting-preview-blank {{
-  min-height: 0.12in;
+  font-size: var(--meeting-row-font-size, inherit);
+  height: calc(1em * var(--meeting-row-line-height, 1.2));
+  min-height: 0;
 }}
 .print-field-list-meeting-preview-divider {{
+  position: relative;
+  font-size: var(--meeting-row-font-size, inherit);
+  height: calc(1em * var(--meeting-row-line-height, 1.2));
+  min-height: 0;
+}}
+.print-field-list-meeting-preview-divider::after {{
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
   border-top: 1px solid #111;
-  height: 0.25em;
-  margin-top: 0.15em;
+  transform: translateY(-50%);
 }}
 .print-field-list-meeting-preview-flow {{
   width: 100%;

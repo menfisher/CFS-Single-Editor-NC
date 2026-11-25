@@ -2,6 +2,9 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+const CONTENT_ROW_FONT_SIZE_MIN_PT = 5;
+const SPACER_ROW_FONT_SIZE_MIN_PT = 1;
+
 function parseRowFontSizePt(rawValue) {
   const value = String(rawValue || "").trim().toLowerCase();
   if (!value) return null;
@@ -14,6 +17,30 @@ function parseRowFontSizePt(rawValue) {
 
 function formatRowFontSizePt(value) {
   return value == null ? "" : value.toFixed(1);
+}
+
+function isSpacerRowKind(kind) {
+  return kind === "blank" || kind === "divider";
+}
+
+function rowFontSizeMinPt(kind) {
+  return isSpacerRowKind(kind) ? SPACER_ROW_FONT_SIZE_MIN_PT : CONTENT_ROW_FONT_SIZE_MIN_PT;
+}
+
+function syncRowFontSizeOptions(select, primaryKind) {
+  if (!select) return;
+  const minPt = rowFontSizeMinPt(primaryKind);
+  Array.from(select.options).forEach((option, index) => {
+    if (index === 0 && option.value === "") return;
+    const size = parseRowFontSizePt(option.value);
+    const belowMin = size != null && size < minPt;
+    option.hidden = belowMin;
+    option.disabled = belowMin;
+  });
+  const selected = parseRowFontSizePt(select.value);
+  if (selected != null && selected < minPt) {
+    select.value = formatRowFontSizePt(minPt);
+  }
 }
 
 function escapeHtml(text) {
@@ -1148,6 +1175,8 @@ function installRowFontSizeControls() {
         .map((input) => input.value);
       const isTableStart = selectedModifiers.includes("table_start");
       const isTableEnd = selectedModifiers.includes("table_end");
+      const primaryKind = primaryHidden.value || "content";
+      syncRowFontSizeOptions(fontSizeInput, primaryKind);
       const overrideFontPt = parseRowFontSizePt(fontSizeInput.value);
 
       if (isTableStart) {

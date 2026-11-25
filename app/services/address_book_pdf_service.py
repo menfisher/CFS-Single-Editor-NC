@@ -1662,14 +1662,16 @@ def _flow_column_styled_line_count(column: dict) -> int:
 
 
 def _meeting_row_font_size_pt(row: dict, default: float) -> float:
+    kind = _clean(row.get("kind"))
+    minimum = 1.0 if kind in {"blank", "divider"} else 4.0
     for key in ("font_size_pt", "effective_font_size_pt"):
         try:
             size = float(row.get(key) or 0)
         except (TypeError, ValueError):
             continue
         if size > 0:
-            return max(4.0, size)
-    return max(4.0, default)
+            return max(minimum, size)
+    return max(minimum, default)
 
 
 def _meeting_row_line_height(row: dict, default: float) -> float:
@@ -3137,10 +3139,20 @@ def build_address_book_pdf(
                 page.rules.append(_PdfRule(margin_left, line_y, page_width - margin_right, line_y))
 
         if kind == "blank":
-            y -= line_step
+            add_row_underline()
+            y -= row_line_step
             return
         if kind == "divider":
-            add_rule()
+            page.rules.append(
+                _PdfRule(
+                    margin_left,
+                    y + (row_line_step * 0.3),
+                    page_width - margin_right,
+                    y + (row_line_step * 0.3),
+                )
+            )
+            add_row_underline()
+            y -= row_line_step
             return
         if kind == "flow":
             grid_width = content_width

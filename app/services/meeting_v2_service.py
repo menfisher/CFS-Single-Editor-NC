@@ -26,23 +26,20 @@ from app.services.print_order_service import (
 )
 
 
-MEETING_FONT_SIZE_OPTIONS = [
-    "5.0",
-    "5.5",
-    "6.0",
-    "6.5",
-    "7.0",
-    "7.5",
-    "8.0",
-    "8.5",
-    "9.0",
-    "9.5",
-    "10.0",
-    "10.5",
-    "11.0",
-    "11.5",
-    "12.0",
-]
+MEETING_FONT_SIZE_STEP_PT = 0.5
+MEETING_ROW_FONT_SIZE_MAX_PT = 12.0
+MEETING_ROW_FONT_SIZE_MIN_PT = 5.0
+MEETING_SPACER_FONT_SIZE_MIN_PT = 1.0
+
+
+def _meeting_font_size_options(min_pt: float, max_pt: float = MEETING_ROW_FONT_SIZE_MAX_PT) -> list[str]:
+    start_steps = int(round(float(min_pt) / MEETING_FONT_SIZE_STEP_PT))
+    end_steps = int(round(float(max_pt) / MEETING_FONT_SIZE_STEP_PT))
+    return [f"{index * MEETING_FONT_SIZE_STEP_PT:.1f}" for index in range(start_steps, end_steps + 1)]
+
+
+MEETING_FONT_SIZE_OPTIONS = _meeting_font_size_options(MEETING_ROW_FONT_SIZE_MIN_PT)
+MEETING_ROW_FONT_SIZE_OPTIONS = _meeting_font_size_options(MEETING_SPACER_FONT_SIZE_MIN_PT)
 
 
 DEFAULT_BOOK_PRESET = {
@@ -172,6 +169,24 @@ def _parse_font_size_code(raw_value) -> float | None:
     if parsed <= 0:
         return None
     return round(parsed, 1)
+
+
+def _row_font_size_min_pt(row_kind) -> float:
+    primary = _primary_row_kind(_split_row_kind_tags(row_kind))
+    if primary in {"blank", "divider"}:
+        return MEETING_SPACER_FONT_SIZE_MIN_PT
+    return MEETING_ROW_FONT_SIZE_MIN_PT
+
+
+def _normalize_row_format_code(raw_value, row_kind) -> str:
+    raw = str(raw_value or "").strip()
+    parsed = _parse_font_size_code(raw)
+    if parsed is None:
+        return raw
+    min_pt = _row_font_size_min_pt(row_kind)
+    if parsed < min_pt:
+        parsed = min_pt
+    return f"{parsed:.1f}"
 
 
 def _field_list_bible_study_base_font_size_pt() -> float:
@@ -2303,9 +2318,11 @@ def get_meeting_v2_section_detail(
     if include_editor_extras:
         section["book_layout_presets"] = [dict(row) for row in fetch_all("SELECT * FROM book_layout_presets ORDER BY is_default DESC, name")]
         section["font_size_options"] = MEETING_FONT_SIZE_OPTIONS
+        section["row_font_size_options"] = MEETING_ROW_FONT_SIZE_OPTIONS
     else:
         section["book_layout_presets"] = []
         section["font_size_options"] = []
+        section["row_font_size_options"] = []
 
     rows = []
     with get_connection() as conn:
@@ -2427,7 +2444,7 @@ def save_meeting_v2_section(
                     "group_with_table_below": int(row.get("group_with_table_below") or 0),
                     "no_meeting_association": 0 if field_list_editor else int(row.get("no_meeting_association") or 0),
                     "print_new_page": int(row.get("print_new_page") or 0) if field_list_editor else 0,
-                    "format_code": str(row.get("format_code") or ""),
+                    "format_code": _normalize_row_format_code(row.get("format_code") or "", row.get("row_kind") or "content"),
                     "label_text": str(row.get("label_text") or ""),
                     "notes": str(row.get("notes") or ""),
                 },

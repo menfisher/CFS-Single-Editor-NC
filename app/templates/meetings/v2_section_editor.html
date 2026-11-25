@@ -197,8 +197,12 @@
                       <option value="">
                         {{ "%.1f"|format(row.effective_font_size_pt) }}
                       </option>
-                      {% for size in ["5.0", "5.5", "6.0", "6.5", "7.0", "7.5", "8.0", "8.5", "9.0", "9.5", "10.0", "10.5", "11.0", "11.5", "12.0"] %}
-                        <option value="{{ size }}" {% if row.font_size_input_value == size %}selected{% endif %}>{{ size }}</option>
+                      {% for size in section.row_font_size_options or section.font_size_options %}
+                        <option
+                          value="{{ size }}"
+                          {% if row.font_size_input_value == size %}selected{% endif %}
+                          {% if size|float < 5 and row.row_kind_primary not in ["blank", "divider"] %}hidden disabled{% endif %}
+                        >{{ size }}</option>
                       {% endfor %}
                     </select>
                   </div>

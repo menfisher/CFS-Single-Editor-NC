@@ -82,6 +82,83 @@ class MeetingSectionLayoutTests(unittest.TestCase):
         )
         self.assertAlmostEqual(float(stored["line_height"]), 1.35)
 
+    def test_blank_and_divider_rows_persist_font_size_1(self) -> None:
+        section_id = create_meeting_v2_section("NC Eastern", "Oxford")
+        editor = get_meeting_v2_section_editor(section_id)
+        row = editor["rows"][0]
+        save_meeting_v2_section(
+            section_id,
+            "",
+            editor["book_layout"]["book_layout_preset_id"],
+            editor["editor_canvas"]["base_font_size_pt"],
+            "CV",
+            [
+                {
+                    "id": row["id"],
+                    "row_order": 1,
+                    "row_kind": "blank",
+                    "format_code": "1.0",
+                    "label_text": "",
+                    "notes": "",
+                }
+            ],
+            [],
+        )
+        reloaded = get_meeting_v2_section_editor(section_id)["rows"][0]
+        self.assertEqual(reloaded["row_kind_primary"], "blank")
+        self.assertEqual(reloaded["format_code"], "1.0")
+        self.assertAlmostEqual(reloaded["effective_font_size_pt"], 1.0)
+
+        save_meeting_v2_section(
+            section_id,
+            "",
+            editor["book_layout"]["book_layout_preset_id"],
+            editor["editor_canvas"]["base_font_size_pt"],
+            "CV",
+            [
+                {
+                    "id": row["id"],
+                    "row_order": 1,
+                    "row_kind": "divider",
+                    "format_code": "4.5",
+                    "label_text": "",
+                    "notes": "",
+                }
+            ],
+            [],
+        )
+        reloaded = get_meeting_v2_section_editor(section_id)["rows"][0]
+        self.assertEqual(reloaded["row_kind_primary"], "divider")
+        self.assertEqual(reloaded["format_code"], "4.5")
+        self.assertAlmostEqual(reloaded["effective_font_size_pt"], 4.5)
+
+    def test_content_rows_keep_minimum_font_size_5(self) -> None:
+        section_id = create_meeting_v2_section("NC Eastern", "Oxford")
+        editor = get_meeting_v2_section_editor(section_id)
+        row = editor["rows"][0]
+        save_meeting_v2_section(
+            section_id,
+            "",
+            editor["book_layout"]["book_layout_preset_id"],
+            editor["editor_canvas"]["base_font_size_pt"],
+            "CV",
+            [
+                {
+                    "id": row["id"],
+                    "row_order": 1,
+                    "row_kind": "content",
+                    "format_code": "1.0",
+                    "label_text": "",
+                    "notes": "",
+                }
+            ],
+            [],
+        )
+        reloaded = get_meeting_v2_section_editor(section_id)["rows"][0]
+        self.assertEqual(reloaded["row_kind_primary"], "content")
+        self.assertEqual(reloaded["format_code"], "5.0")
+        self.assertAlmostEqual(reloaded["effective_font_size_pt"], 5.0)
+
     def test_missing_section_does_not_raise_when_preparing_layout(self) -> None:
         _ensure_section_layout(304719)
         layout = fetch_one(

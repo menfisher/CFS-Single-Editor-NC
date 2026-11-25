@@ -1352,6 +1352,12 @@ function meetingPreviewRowFontSizePt(row) {
   return effective > 0 ? effective : 0;
 }
 
+function meetingPreviewRowLineHeight(row) {
+  const value = Number(row?.line_height || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.max(0.8, Math.min(3, value));
+}
+
 function meetingPreviewGridGapPx(row) {
   const gapPx = Math.max(0, Math.min(48, Number(row?.column_gap_px || 6)));
   const previewWidthPx = Number(row?.preview_printable_width_px || 0);
@@ -1439,8 +1445,10 @@ function renderFlowBandHtml(columns, bandClass = "") {
 
 function renderAddressBookPdfMeetingPreviewRow(row) {
   const rowFontSizePt = meetingPreviewRowFontSizePt(row);
+  const rowLineHeight = meetingPreviewRowLineHeight(row);
   const rowStyle = [
     rowFontSizePt ? `--meeting-row-font-size: ${rowFontSizePt.toFixed(2)}pt` : "",
+    rowLineHeight ? `--meeting-row-line-height: ${rowLineHeight.toFixed(2)}` : "",
     `--meeting-grid-column-gap: ${meetingPreviewGridGapPx(row).toFixed(2)}px`,
   ].filter(Boolean).join("; ");
   const styleAttr = rowStyle ? ` style="${rowStyle}"` : "";

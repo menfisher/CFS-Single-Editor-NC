@@ -7172,8 +7172,8 @@ button.site-nav-dropdown-item:hover {
 }
 
 .wysiwyg-grid-blank {
-  min-height: 0.12in;
-  padding-top: 4px;
+  min-height: 0;
+  padding-top: 0;
 }
 
 .wysiwyg-cell-hidden {
@@ -7181,7 +7181,8 @@ button.site-nav-dropdown-item:hover {
 }
 
 .wysiwyg-blank-row-spacer {
-  height: 0.12in;
+  height: calc(var(--row-base-font-px, var(--editor-base-font-px, 16px)) * var(--editor-line-height, 1.2));
+  min-height: 0;
   border-radius: 6px;
   background: #ffffff;
   border: 1px solid rgba(215, 208, 195, 0.55);
@@ -7189,7 +7190,8 @@ button.site-nav-dropdown-item:hover {
 
 .wysiwyg-divider-row-spacer {
   position: relative;
-  height: 18px;
+  height: calc(var(--row-base-font-px, var(--editor-base-font-px, 16px)) * var(--editor-line-height, 1.2));
+  min-height: 0;
   border-radius: 6px;
   background: #ffffff;
   border: 1px solid rgba(215, 208, 195, 0.55);
@@ -8473,12 +8475,26 @@ button.site-nav-dropdown-item:hover {
 }
 
 .field-list-meeting-preview-blank {
-  min-height: 0.12in;
+  font-size: var(--meeting-row-font-size, inherit);
+  height: calc(1em * var(--meeting-row-line-height, 1.2));
+  min-height: 0;
 }
 
 .field-list-meeting-preview-divider {
-  min-height: 0.08in;
-  border-bottom: 1px solid rgba(21, 94, 99, 0.16);
+  position: relative;
+  font-size: var(--meeting-row-font-size, inherit);
+  height: calc(1em * var(--meeting-row-line-height, 1.2));
+  min-height: 0;
+}
+
+.field-list-meeting-preview-divider::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid rgba(21, 94, 99, 0.16);
+  transform: translateY(-50%);
 }
 
 .field-list-block-delete {

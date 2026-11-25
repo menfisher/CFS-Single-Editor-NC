@@ -284,12 +284,14 @@
     }
 
     .print-preview-spacer-blank {
-      min-height: 0.12in;
+      height: calc(1em * {{ section.print_preview.line_height }});
+      min-height: 0;
     }
 
     .print-preview-spacer-divider {
       position: relative;
-      min-height: 0.12in;
+      height: calc(1em * {{ section.print_preview.line_height }});
+      min-height: 0;
     }
 
     .print-preview-spacer-divider::after {
