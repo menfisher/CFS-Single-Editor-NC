@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.254",
+      "version": "1.255",
+      "date_display": "11/25/2026",
+      "description": "MeetingData blank and divider row height follows Font size, down to 1 pt."
+    },
+    {
       "date_display": "11/14/2026",
+      "version": "1.254",
       "description": "Sign-in keeps the local contact book when Drive IDs differ, Pending Edits completed rows stay green, and permanent deletes are recorded on the Contacts Edit list."
     },
     {
