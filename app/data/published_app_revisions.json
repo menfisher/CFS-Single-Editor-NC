@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.257",
+      "version": "1.258",
       "date_display": "11/26/2026",
+      "description": "Reduced print-book note sizes are no longer floored to the book font, pb/pa line height follows the sized type, and pocket-book notes can print below 6 pt."
+    },
+    {
+      "date_display": "11/26/2026",
+      "version": "1.257",
       "description": "Printed notes use the contact-card A+/A\u2212 size, and children stay on one or two name lines without an ellipsis."
     },
     {
