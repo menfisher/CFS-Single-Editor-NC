@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.255",
+      "version": "1.256",
       "date_display": "11/25/2026",
+      "description": "Children\u2019s names wrap instead of ellipsis, MeetingData has a tunable gap after the meeting, and TOC continuation pages start meetings at the same top as page 1."
+    },
+    {
+      "date_display": "11/25/2026",
+      "version": "1.255",
       "description": "MeetingData blank and divider row height follows Font size, down to 1 pt."
     },
     {
