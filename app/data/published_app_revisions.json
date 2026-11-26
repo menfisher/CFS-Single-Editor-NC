@@ -2,8 +2,13 @@
   "format": "contactsfreeshare.published_revisions.v1",
   "revisions": [
     {
-      "version": "1.256",
+      "version": "1.257",
+      "date_display": "11/26/2026",
+      "description": "Printed notes use the contact-card A+/A\u2212 size, and children stay on one or two name lines without an ellipsis."
+    },
+    {
       "date_display": "11/25/2026",
+      "version": "1.256",
       "description": "Children\u2019s names wrap instead of ellipsis, MeetingData has a tunable gap after the meeting, and TOC continuation pages start meetings at the same top as page 1."
     },
     {
