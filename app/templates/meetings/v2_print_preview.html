@@ -154,6 +154,10 @@
       text-align: center;
     }
 
+    .print-preview-heading:has(+ .print-preview-space-before) {
+      margin-bottom: 0;
+    }
+
     .print-preview-title {
       margin: 0;
       font-size: 1.05em;
@@ -446,6 +450,13 @@
         <div class="print-preview-heading">
           <h1 class="print-preview-title">{{ section.meeting_name }}</h1>
         </div>
+        {% if not section.is_field_end_list %}
+        <div class="print-preview-row print-preview-space-before" style="--row-font-size-pt: {{ "%.1f"|format(section.space_before_font_size) }}pt;">
+          <div class="print-preview-grid">
+            <div class="print-preview-spacer-blank" style="grid-column: 1 / -1;"></div>
+          </div>
+        </div>
+        {% endif %}
 
         <div class="print-preview-stack">
           {% for preview_block in section.print_blocks %}

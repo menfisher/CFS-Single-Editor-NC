@@ -146,6 +146,41 @@
           style="--editor-columns: {{ section.editor_canvas.column_count }}; --editor-column-width: {{ section.editor_canvas.column_width_px_preview }}px; --editor-column-gap: {{ section.editor_canvas.column_gap_px }}px; --editor-preview-width: {{ section.editor_canvas.preview_width_px }}px; --editor-preview-scale: {{ section.editor_canvas.screen_preview_scale }}; --editor-base-font-px: {{ (section.editor_canvas.base_font_size_pt / 72.0) * section.editor_canvas.screen_preview_scale }}px; --editor-line-height: {{ section.editor_canvas.line_height }}; --editor-display-line-height: {{ section.editor_canvas.line_height * 0.9 }}; --editor-font-family: '{{ section.editor_canvas.font_family }}';"
         >
           <div class="meeting-sheet-block wysiwyg-sheet-block">
+            {% if not section.is_field_end_list %}
+            <section
+              class="meeting-sheet-row wysiwyg-sheet-row wysiwyg-space-before-row"
+              data-space-before-row
+              data-effective-font-pt="{{ "%.1f"|format(section.space_before_font_size) }}"
+              style="--row-base-font-px: {{ (section.space_before_font_size / 72.0) * section.editor_canvas.screen_preview_scale }}px; --editor-row-fill: {{ row_colors.primary }}; --editor-row-hover: {{ row_colors.highlight }};"
+            >
+              <div class="meeting-sheet-gutter wysiwyg-gutter">
+                <div class="wysiwyg-row-toolbar wysiwyg-space-before-toolbar">
+                  <div class="wysiwyg-row-id wysiwyg-space-before-label">
+                    <strong>Space between Meeting and Meeting data</strong>
+                  </div>
+                  <div class="wysiwyg-row-control wysiwyg-row-control-format">
+                    <label class="form-label form-label-inline" for="space_before_font_size">Font size</label>
+                    <select
+                      id="space_before_font_size"
+                      name="space_before_font_size"
+                      class="wysiwyg-row-font-size-input"
+                      data-space-before-font-size-input
+                    >
+                      {% for size in section.row_font_size_options or section.font_size_options %}
+                        <option
+                          value="{{ size }}"
+                          {% if "%.1f"|format(section.space_before_font_size) == size %}selected{% endif %}
+                        >{{ size }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                </div>
+                <div class="meeting-sheet-grid wysiwyg-grid wysiwyg-grid-blank">
+                  <div class="wysiwyg-blank-row-spacer" style="grid-column: 1 / -1"></div>
+                </div>
+              </div>
+            </section>
+            {% endif %}
             {% for row in section.rows %}
             {% set row_fill_color = row_colors.primary if loop.index0 % 2 == 0 else row_colors.secondary %}
             <section class="meeting-sheet-row wysiwyg-sheet-row {% if row.is_underlined_row %}wysiwyg-row-underlined{% endif %}" id="row-{{ row.id }}" data-effective-font-pt="{{ "%.1f"|format(row.effective_font_size_pt) }}" style="--row-base-font-px: {{ (row.effective_font_size_pt / 72.0) * section.editor_canvas.screen_preview_scale }}px; --editor-row-fill: {{ row_fill_color }}; --editor-row-hover: {{ row_colors.highlight }};">
@@ -682,6 +717,9 @@
           <p class="app-modal-copy"><strong>table start</strong> begins a table. Two options appear: <strong>group with table below</strong> keeps this table with the next. <strong>no meeting association</strong> prints an extra table behind a meeting without the meeting name at the top. This option appears on regular meetings, not Field lists.</p>
           {% endif %}
           <p class="app-modal-copy"><strong>table end</strong> ends the table.</p>
+          {% if not section.is_field_end_list %}
+          <p class="app-modal-copy"><strong>Space between Meeting and Meeting data</strong> is the gap after the meeting contacts and before the first MeetingData row. Font size sets that gap the same way a blank row does.</p>
+          {% endif %}
           <p class="app-modal-copy"><strong>Font size</strong> sets this row's type size. Rows after table start can keep that table's size until table end.</p>
           <p class="app-modal-copy"><strong>Insert Blank Row Below</strong> adds a row under this one. The chevron chooses New Row, Divider Line, Blank Row, or Cloned Row.</p>
           <p class="app-modal-copy"><strong>Add Cell</strong> adds one cell. The chevron adds 2 or 3 cells. On a column-flow row this is Add Column.</p>
@@ -768,7 +806,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="/static/js/meeting_editor.js?v=28"></script>
+  <script src="/static/js/meeting_editor.js?v=29"></script>
   <script>
     window.addEventListener("DOMContentLoaded", () => {
       const layoutInfoButton = document.getElementById("meeting-layout-info-button");

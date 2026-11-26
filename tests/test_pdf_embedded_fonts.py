@@ -341,8 +341,11 @@ class PdfEmbeddedFontTests(unittest.TestCase):
         space = tw(" ", 7)
         child = next(span for span in spans if "Hunter" in (span.get("text") or "") and "SUMMEY" not in (span.get("text") or ""))
         address = next(span for span in spans if "7500" in (span.get("text") or ""))
-        self.assertAlmostEqual(child["bbox"][0], summey["bbox"][0] + space, places=1)
         self.assertAlmostEqual(address["bbox"][0], summey["bbox"][0] + space, places=1)
+        if abs(child["bbox"][1] - summey["bbox"][1]) < 2:
+            self.assertGreater(child["bbox"][0], summey["bbox"][2])
+        else:
+            self.assertAlmostEqual(child["bbox"][0], summey["bbox"][0] + space, places=1)
 
         phone_span = next(span for span in spans if "336-834-8053" in span["text"])
         if "Le" in phone_span["text"]:

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS meeting_sections_v2 (
   source_legacy_start_row INTEGER,
   source_legacy_end_row INTEGER,
   notes TEXT,
+  space_before_font_size REAL NOT NULL DEFAULT 7.0,
   UNIQUE(field_name, meeting_name)
 );
 

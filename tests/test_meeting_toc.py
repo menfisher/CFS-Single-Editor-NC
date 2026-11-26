@@ -134,6 +134,66 @@ class MeetingTocTests(unittest.TestCase):
         self.assertIn("CONCORD", page_text(pages[0]))
         self.assertNotIn("NC Western Field/Charlotte", page_text(pages[0]))
 
+    def test_toc_continuation_pages_keep_page_one_meeting_y(self) -> None:
+        entries = []
+        for field_index in range(9):
+            field_name = f"Field {field_index + 1}"
+            for meeting_index in range(4):
+                entries.append(
+                    _TocEntry(
+                        field_name,
+                        f"MEETING {field_index + 1}-{meeting_index + 1}",
+                        (field_index * 4) + meeting_index + 1,
+                    )
+                )
+        pages = _build_toc_pages(
+            entries=entries,
+            book_title="Address Book",
+            page_width=400,
+            page_height=200,
+            margin_left=10,
+            margin_right=10,
+            margin_top=10,
+            margin_bottom=10,
+            base_font_size=10,
+            page_offset=0,
+            compact=False,
+            font_family="Arial",
+            title_font_size=12,
+            toc_font_size=10,
+        )
+        self.assertGreaterEqual(len(pages), 3)
+
+        meeting_names = {entry.meeting_heading for entry in entries}
+        field_names = {entry.field_name for entry in entries}
+
+        def first_named_y(page, names: set[str]) -> float:
+            for line in page.lines:
+                if line.text in names:
+                    return line.y
+            self.fail(f"expected one of {sorted(names)} on TOC page")
+            return 0.0
+
+        page1_meeting_y = first_named_y(pages[0], meeting_names)
+        page1_field_y = first_named_y(pages[0], field_names)
+        for page in pages[1:]:
+            self.assertFalse(
+                any(line.text.startswith("Address Book") for line in page.lines),
+                "continuation TOC pages should not repeat the date title",
+            )
+            self.assertAlmostEqual(first_named_y(page, meeting_names), page1_meeting_y, places=4)
+            self.assertAlmostEqual(first_named_y(page, field_names), page1_field_y, places=4)
+
+        item_size = 10.0
+        line_step = item_size * 1.15
+        # Continuation pages used to start after line_step * 1.25. They now
+        # reserve the page-1 title band (0.85 + 1.7), so content sits
+        # line_step * 1.3 (item_size * 1.495) lower than before.
+        previous_continuation_y = 200 - 10 - (line_step * 1.25)
+        extra_top = line_step * 1.3
+        self.assertAlmostEqual(page1_field_y, previous_continuation_y - extra_top, places=4)
+        self.assertAlmostEqual(pages[1].lines[0].y, page1_field_y, places=4)
+
 
 if __name__ == "__main__":
     unittest.main()

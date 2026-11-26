@@ -1491,6 +1491,39 @@ def _format_name_suffix_for_parts(children: list[str], others: list[tuple[str, s
     return ""
 
 
+def _typed_segments_from_suffix_text(suffix: str) -> list[tuple[str, str]]:
+    segments: list[tuple[str, str]] = []
+    remaining = _clean(suffix)
+    while remaining:
+        label_match = re.match(r"^([^:,]+):\s*", remaining)
+        if label_match:
+            label = label_match.group(1).strip()
+            remaining = remaining[label_match.end() :]
+            next_label = re.search(r",\s*(?:[^:,]+):\s*", remaining)
+            if next_label:
+                name = remaining[: next_label.start()].strip()
+                remaining = remaining[next_label.start() + 1 :].lstrip()
+            else:
+                name = remaining.strip()
+                remaining = ""
+            formatted = f"{label}: {name}" if label else name
+            if formatted:
+                segments.append(("labeled", formatted))
+            continue
+        next_label = re.search(r",\s*(?:[^:,]+):\s*", remaining)
+        if next_label:
+            child_chunk = remaining[: next_label.start()].strip().rstrip(",")
+            remaining = remaining[next_label.start() + 1 :].lstrip()
+        else:
+            child_chunk = remaining.strip()
+            remaining = ""
+        for part in child_chunk.split(","):
+            name = part.strip()
+            if name:
+                segments.append(("child", name))
+    return segments
+
+
 def _relationship_suffix_typed_segments(contact: dict[str, Any]) -> list[tuple[str, str]]:
     segments: list[tuple[str, str]] = []
     for child in contact.get("children") or []:
@@ -1504,7 +1537,24 @@ def _relationship_suffix_typed_segments(contact: dict[str, Any]) -> list[tuple[s
             continue
         formatted = _format_labeled_relationship(label, name) if label else name
         segments.append(("labeled", formatted))
-    return segments
+    if segments:
+        return segments
+    value = _clean(contact.get("name") or contact.get("label") or "")
+    semicolon_index = value.find("; ")
+    if semicolon_index < 0:
+        return segments
+    return _typed_segments_from_suffix_text(value[semicolon_index + 2 :])
+
+
+def _suffix_from_typed_segments(typed_segments: list[tuple[str, str]]) -> str:
+    if not typed_segments:
+        return ""
+    joined = ", ".join(text for _, text in typed_segments if text)
+    if not joined:
+        return ""
+    if typed_segments[0][0] == "child":
+        return f"; {joined}"
+    return f", {joined}"
 
 
 def _relationship_suffix_segments(contact: dict[str, Any]) -> list[str]:
@@ -1549,57 +1599,78 @@ def _pack_typed_suffix_lines(
     max_width: float,
     *,
     semicolon_on_previous_line: bool = False,
+    initial_text: str = "",
+    first_line_measure_width=None,
+    first_line_max_width: float | None = None,
 ) -> list[str]:
     if not typed_segments:
-        return []
+        return [initial_text] if initial_text else []
+
+    first_measure = first_line_measure_width or measure_width
+    first_max = max_width if first_line_max_width is None else first_line_max_width
+
+    def line_fits(text: str, *, first_line: bool) -> bool:
+        if first_line:
+            return first_measure(text) <= first_max
+        return measure_width(text) <= max_width
 
     def append_wrapped(text: str) -> None:
         lines.extend(_wrap_relationship_text(text, measure_width, max_width))
 
     lines: list[str] = []
-    current = ""
-    is_first_suffix_line = True
+    current = initial_text
+    on_first_line = True
+    attached_suffix = False
 
     for kind, text in typed_segments:
-        if not current:
-            if semicolon_on_previous_line and is_first_suffix_line:
-                prefix = ""
-            elif kind == "child" and is_first_suffix_line:
-                prefix = "; "
-            elif is_first_suffix_line:
-                prefix = " "
+        if current:
+            if not attached_suffix and kind == "child":
+                piece = f"{current}; {text}"
             else:
-                prefix = ", "
-            piece = f"{prefix}{text}"
+                piece = f"{current}, {text}"
+        elif not attached_suffix:
+            if semicolon_on_previous_line and kind == "child":
+                piece = text
+            elif kind == "child":
+                piece = f"; {text}"
+            else:
+                piece = f" {text}"
+        elif kind == "child":
+            piece = text
         else:
-            piece = f"{current}, {text}"
+            piece = f" {text}"
 
-        if current and measure_width(piece) > max_width:
-            is_first_suffix_line = False
+        if current and not line_fits(piece, first_line=on_first_line):
             if kind == "child":
-                lines.append(current if current.endswith(",") else f"{current},")
+                trailing = ";" if not attached_suffix else ","
+                lines.append(current if current.endswith(trailing) else f"{current}{trailing}")
                 next_text = text
             else:
                 lines.append(current)
                 next_text = f" {text}"
-            if measure_width(next_text) > max_width:
+            on_first_line = False
+            attached_suffix = True
+            if not line_fits(next_text, first_line=False):
                 append_wrapped(next_text.lstrip())
                 current = ""
             else:
                 current = next_text
         elif not current:
-            if measure_width(piece) > max_width:
+            if not line_fits(piece, first_line=on_first_line):
                 append_wrapped(piece.lstrip())
-                is_first_suffix_line = False
+                attached_suffix = True
+                on_first_line = False
                 current = ""
             else:
                 current = piece
+                attached_suffix = True
         else:
             current = piece
+            attached_suffix = True
 
     if current:
-        if measure_width(current) > max_width:
-            append_wrapped(current)
+        if not line_fits(current, first_line=on_first_line):
+            append_wrapped(current.lstrip() if not on_first_line else current)
         else:
             lines.append(current)
     return lines
@@ -1629,39 +1700,30 @@ def _wrap_contact_name_lines(
     contact: dict[str, Any],
     measure_width,
     max_width: float,
+    *,
+    first_line_measure_width=None,
+    first_line_max_width: float | None = None,
 ) -> list[str]:
     typed_segments = _relationship_suffix_typed_segments(contact)
     head = _contact_name_head(contact)
+    first_measure = first_line_measure_width or measure_width
+    first_max = max_width if first_line_max_width is None else first_line_max_width
     if not typed_segments:
-        if measure_width(head) <= max_width:
+        if first_measure(head) <= first_max:
             return [head]
         return _wrap_text_by_words(head, measure_width, max_width)
-    children = [_clean(child) for child in contact.get("children") or [] if _clean(child)]
-    others = [
-        (_clean(item.get("relation_type")), _clean(item.get("relation_value")))
-        for item in contact.get("other_relationships") or []
-    ]
-    suffix = _format_name_suffix_for_parts(children, others)
+    suffix = _suffix_from_typed_segments(typed_segments)
     full = f"{head}{suffix}"
-    if measure_width(full) <= max_width:
+    if first_measure(full) <= first_max:
         return [full]
-    head_line = head
-    semicolon_on_previous_line = False
-    if typed_segments and typed_segments[0][0] == "child":
-        head_with_semi = f"{head};"
-        if measure_width(head_with_semi) <= max_width:
-            head_line = head_with_semi
-            semicolon_on_previous_line = True
-    lines = [head_line]
-    lines.extend(
-        _pack_typed_suffix_lines(
-            typed_segments,
-            measure_width,
-            max_width,
-            semicolon_on_previous_line=semicolon_on_previous_line,
-        )
-    )
-    return lines
+    return _pack_typed_suffix_lines(
+        typed_segments,
+        measure_width,
+        max_width,
+        initial_text=head,
+        first_line_measure_width=first_measure,
+        first_line_max_width=first_max,
+    ) or [head]
 
 
 def _wrap_text_by_words(text: str, measure_width, max_width: float) -> list[str]:
@@ -2500,7 +2562,11 @@ def _flow_column_html_line_count(column: dict[str, Any]) -> int:
 
 
 def _field_list_meeting_preview_payload() -> dict[str, Any]:
-    from app.services.meeting_v2_service import get_meeting_v2_section_print_preview, list_meeting_v2_sections
+    from app.services.meeting_v2_service import (
+        DEFAULT_SPACE_BEFORE_FONT_SIZE_PT,
+        get_meeting_v2_section_print_preview,
+        list_meeting_v2_sections,
+    )
 
     # list_meeting_v2_sections() already runs ensure once; skip repeating it per section.
     previews: list[dict[str, Any]] = []
@@ -2585,6 +2651,9 @@ def _field_list_meeting_preview_payload() -> dict[str, Any]:
                 "meeting": str(section.get("meeting_name") or ""),
                 "field_key": _norm_lookup(section.get("field_name")),
                 "meeting_key": _norm_lookup(section.get("meeting_name")),
+                "space_before_font_size": float(
+                    section.get("space_before_font_size") or DEFAULT_SPACE_BEFORE_FONT_SIZE_PT
+                ),
                 "rows": rows,
             }
         )
@@ -3419,7 +3488,7 @@ def _field_list_print_contact_name_html(contact: dict[str, Any], settings: dict[
         else:
             line_html = _field_list_print_contact_name_head_html(line)
         indent_class = " is-indented" if index > 0 else ""
-        indent_style = f' style="padding-left: {index}ch;"' if index > 0 else ""
+        indent_style = ' style="padding-left: 1ch;"' if index > 0 else ""
         html_lines.append(f'<div class="print-field-list-contact-name-line{indent_class}"{indent_style}>{line_html}</div>')
     return "".join(html_lines)
 

@@ -466,6 +466,7 @@ def _apply_database_migrations(conn: sqlite3.Connection) -> None:
     _ensure_meeting_toc_exclusion_table(conn)
     _ensure_field_end_list_table(conn)
     _ensure_meeting_row_print_new_page_column(conn)
+    _ensure_meeting_space_before_font_size_column(conn)
     _ensure_contact_edit_log_table(conn)
     _ensure_meeting_edit_log_table(conn)
     _ensure_app_revisions_table(conn)
@@ -1011,6 +1012,19 @@ def _ensure_meeting_row_print_new_page_column(conn: sqlite3.Connection) -> None:
             """
             ALTER TABLE meeting_section_rows_v2
             ADD COLUMN print_new_page INTEGER NOT NULL DEFAULT 0
+            """
+        )
+
+
+def _ensure_meeting_space_before_font_size_column(conn: sqlite3.Connection) -> None:
+    if not _sqlite_table_exists(conn, "meeting_sections_v2"):
+        return
+    columns = _sqlite_table_columns(conn, "meeting_sections_v2")
+    if "space_before_font_size" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE meeting_sections_v2
+            ADD COLUMN space_before_font_size REAL NOT NULL DEFAULT 7.0
             """
         )
 

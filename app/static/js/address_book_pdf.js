@@ -482,6 +482,7 @@ function contactNameHtmlForAddressBookPdf(value, contact = null) {
     }).join(", ");
   };
   const renderSuffixHtml = (item, suffixText = "") => {
+    if (String(suffixText || "").trim()) return renderSuffixFromText(suffixText);
     const fromContact = renderSuffixFromContact(item);
     return fromContact || renderSuffixFromText(suffixText);
   };
@@ -631,7 +632,7 @@ function addressBookPdfFontGroup(fontFamily = "Arial") {
   return "helvetica";
 }
 
-function measureAddressBookPdfTextWidth(text, fontSizePx, fontFamily = "Arial") {
+function measureAddressBookPdfTextWidth(text, fontSizePx, fontFamily = "Arial", bold = false) {
   const value = String(text || "");
   if (!value) return 0;
   const group = addressBookPdfFontGroup(fontFamily);
@@ -642,7 +643,7 @@ function measureAddressBookPdfTextWidth(text, fontSizePx, fontFamily = "Arial") 
       const ctx = canvas.getContext("2d");
       if (ctx) {
         const fallback = group === "courier" ? "monospace" : group === "times" ? "serif" : "sans-serif";
-        ctx.font = `${fontSizePx}px "${fontFamily}", ${fallback}`;
+        ctx.font = `${bold ? "bold " : ""}${fontSizePx}px "${fontFamily}", ${fallback}`;
         const width = ctx.measureText(value).width;
         if (Number.isFinite(width) && width > 0) return width;
       }
@@ -676,13 +677,31 @@ function addressBookPdfPreviewLayoutMetrics() {
   return { fontSizePx, printableWidthPx, fontFamily };
 }
 
-function addressBookPdfContactNameMaxWidthPx(printableWidthPx, fontSizePx, fontFamily = "Arial") {
+function addressBookPdfContactNameColumnWidths(printableWidthPx, fontSizePx, fontFamily = "Arial") {
+  const space = measureAddressBookPdfTextWidth(" ", fontSizePx, fontFamily);
   const phoneReserve = measureAddressBookPdfTextWidth("000-000-0000", fontSizePx, fontFamily)
-    + measureAddressBookPdfTextWidth(" ", fontSizePx, fontFamily)
+    + space
     + measureAddressBookPdfTextWidth("00", fontSizePx, fontFamily)
-    + measureAddressBookPdfTextWidth(" ", fontSizePx, fontFamily)
-    + measureAddressBookPdfTextWidth(" ", fontSizePx, fontFamily);
-  return Math.max(120, printableWidthPx - phoneReserve);
+    + space;
+  const firstLine = Math.max(120, printableWidthPx - phoneReserve);
+  return {
+    firstLine,
+    continuation: Math.max(120, firstLine - space),
+  };
+}
+
+function addressBookPdfContactNameMaxWidthPx(printableWidthPx, fontSizePx, fontFamily = "Arial") {
+  return addressBookPdfContactNameColumnWidths(printableWidthPx, fontSizePx, fontFamily).continuation;
+}
+
+function measureAddressBookPdfFirstLineWidth(text, fontSizePx, fontFamily = "Arial") {
+  const value = String(text || "");
+  const commaIndex = value.indexOf(",");
+  if (commaIndex > 0) {
+    return measureAddressBookPdfTextWidth(value.slice(0, commaIndex), fontSizePx, fontFamily, true)
+      + measureAddressBookPdfTextWidth(value.slice(commaIndex), fontSizePx, fontFamily, false);
+  }
+  return measureAddressBookPdfTextWidth(value, fontSizePx, fontFamily, true);
 }
 
 function wrapAddressBookPdfNameWords(text, measureWidth, maxWidth) {
@@ -740,63 +759,81 @@ function packTypedSuffixLinesForAddressBookPdf(
   typedSegments,
   measureWidth,
   maxWidth,
-  { semicolonOnPreviousLine = false } = {},
+  {
+    semicolonOnPreviousLine = false,
+    initialText = "",
+    firstLineMeasureWidth = null,
+    firstLineMaxWidth = null,
+  } = {},
 ) {
-  if (!typedSegments.length) return [];
+  if (!typedSegments.length) return initialText ? [initialText] : [];
+  const firstMeasure = firstLineMeasureWidth || measureWidth;
+  const firstMax = firstLineMaxWidth == null ? maxWidth : firstLineMaxWidth;
+  const lineFits = (text, firstLine) => (
+    firstLine ? firstMeasure(text) <= firstMax : measureWidth(text) <= maxWidth
+  );
   const lines = [];
-  let current = "";
-  let isFirstSuffixLine = true;
+  let current = initialText;
+  let onFirstLine = true;
+  let attachedSuffix = false;
 
   typedSegments.forEach(({ kind, text }) => {
     let piece;
-    if (!current) {
-      let prefix;
-      if (semicolonOnPreviousLine && isFirstSuffixLine) {
-        prefix = "";
-      } else if (kind === "child" && isFirstSuffixLine) {
-        prefix = "; ";
-      } else if (isFirstSuffixLine) {
-        prefix = " ";
-      } else {
-        prefix = ", ";
-      }
-      piece = `${prefix}${text}`;
+    if (current) {
+      piece = (!attachedSuffix && kind === "child") ? `${current}; ${text}` : `${current}, ${text}`;
+    } else if (!attachedSuffix) {
+      if (semicolonOnPreviousLine && kind === "child") piece = text;
+      else if (kind === "child") piece = `; ${text}`;
+      else piece = ` ${text}`;
+    } else if (kind === "child") {
+      piece = text;
     } else {
-      piece = `${current}, ${text}`;
+      piece = ` ${text}`;
     }
 
-    if (current && measureWidth(piece) > maxWidth) {
-      isFirstSuffixLine = false;
-      let nextText;
+    if (current && !lineFits(piece, onFirstLine)) {
       if (kind === "child") {
-        lines.push(current.endsWith(",") ? current : `${current},`);
-        nextText = text;
+        const trailing = attachedSuffix ? "," : ";";
+        lines.push(current.endsWith(trailing) ? current : `${current}${trailing}`);
+        current = "";
+        attachedSuffix = true;
+        onFirstLine = false;
+        if (!lineFits(text, false)) {
+          lines.push(...wrapAddressBookPdfRelationshipText(text, measureWidth, maxWidth));
+        } else {
+          current = text;
+        }
       } else {
         lines.push(current);
-        nextText = ` ${text}`;
-      }
-      if (measureWidth(nextText) > maxWidth) {
-        lines.push(...wrapAddressBookPdfRelationshipText(nextText.trimStart(), measureWidth, maxWidth));
-        current = "";
-      } else {
-        current = nextText;
+        const nextText = ` ${text}`;
+        attachedSuffix = true;
+        onFirstLine = false;
+        if (!lineFits(nextText, false)) {
+          lines.push(...wrapAddressBookPdfRelationshipText(nextText.trimStart(), measureWidth, maxWidth));
+          current = "";
+        } else {
+          current = nextText;
+        }
       }
     } else if (!current) {
-      if (measureWidth(piece) > maxWidth) {
+      if (!lineFits(piece, onFirstLine)) {
         lines.push(...wrapAddressBookPdfRelationshipText(piece.trimStart(), measureWidth, maxWidth));
-        isFirstSuffixLine = false;
+        attachedSuffix = true;
+        onFirstLine = false;
         current = "";
       } else {
         current = piece;
+        attachedSuffix = true;
       }
     } else {
       current = piece;
+      attachedSuffix = true;
     }
   });
 
   if (current) {
-    if (measureWidth(current) > maxWidth) {
-      lines.push(...wrapAddressBookPdfRelationshipText(current.trimStart(), measureWidth, maxWidth));
+    if (!lineFits(current, onFirstLine)) {
+      lines.push(...wrapAddressBookPdfRelationshipText(onFirstLine ? current : current.trimStart(), measureWidth, maxWidth));
     } else {
       lines.push(current);
     }
@@ -804,32 +841,33 @@ function packTypedSuffixLinesForAddressBookPdf(
   return lines;
 }
 
-function wrapAddressBookPdfContactNameLines(contact, maxWidthPx, fontSizePx = 10, fontFamily = "Arial") {
+function wrapAddressBookPdfContactNameLines(contact, maxWidthPx, fontSizePx = 10, fontFamily = "Arial", firstLineMaxWidthPx = null) {
   const typedSegments = relationshipSuffixTypedSegments(contact);
   const head = contactNameHead(contact);
   const measureWidth = (text) => measureAddressBookPdfTextWidth(text, fontSizePx, fontFamily);
+  const firstMax = firstLineMaxWidthPx == null ? maxWidthPx : firstLineMaxWidthPx;
+  const measureFirst = (text) => measureAddressBookPdfFirstLineWidth(text, fontSizePx, fontFamily);
   if (!typedSegments.length) {
     const text = String(contact?.name || "CONTACT, Name").trim();
     return [text];
   }
-  const suffix = formatNameSuffixForParts(contact?.children, contact?.other_relationships);
+  const suffix = formatNameSuffixForParts(contact?.children, contact?.other_relationships)
+    || (typedSegments[0].kind === "child"
+      ? `; ${typedSegments.map((segment) => segment.text).join(", ")}`
+      : `, ${typedSegments.map((segment) => segment.text).join(", ")}`);
   const full = `${head}${suffix}`;
-  if (measureWidth(full) <= maxWidthPx) return [full];
+  if (measureFirst(full) <= firstMax) return [full];
 
-  let headLine = head;
-  let semicolonOnPreviousLine = false;
-  if (typedSegments.length && typedSegments[0].kind === "child") {
-    const headWithSemi = `${head};`;
-    if (measureWidth(headWithSemi) <= maxWidthPx) {
-      headLine = headWithSemi;
-      semicolonOnPreviousLine = true;
-    }
-  }
-
-  return [
-    headLine,
-    ...packTypedSuffixLinesForAddressBookPdf(typedSegments, measureWidth, maxWidthPx, { semicolonOnPreviousLine }),
-  ];
+  return packTypedSuffixLinesForAddressBookPdf(
+    typedSegments,
+    measureWidth,
+    maxWidthPx,
+    {
+      initialText: head,
+      firstLineMeasureWidth: measureFirst,
+      firstLineMaxWidth: firstMax,
+    },
+  );
 }
 
 function splitAddressBookPdfTypePrefix(text) {
@@ -1652,7 +1690,8 @@ function renderAddressBookPdfAddressLineHtml(address) {
 function renderAddressBookPdfContactPreviewRows(contact) {
   const phones = (contact.phones || []).filter((item) => item.value);
   const { fontSizePx, printableWidthPx, fontFamily } = addressBookPdfPreviewLayoutMetrics();
-  const maxNameWidthPx = addressBookPdfContactNameMaxWidthPx(printableWidthPx, fontSizePx, fontFamily);
+  const nameColumns = addressBookPdfContactNameColumnWidths(printableWidthPx, fontSizePx, fontFamily);
+  const maxNameWidthPx = nameColumns.continuation;
   const addressMaxWidthPx = maxNameWidthPx;
   const addressSource = (Array.isArray(contact.address_entries) && contact.address_entries.length)
     ? contact.address_entries
@@ -1668,7 +1707,13 @@ function renderAddressBookPdfContactPreviewRows(contact) {
         addressText: address.text,
       }))
     ));
-  const nameLines = wrapAddressBookPdfContactNameLines(contact, maxNameWidthPx, fontSizePx, fontFamily);
+  const nameLines = wrapAddressBookPdfContactNameLines(
+    contact,
+    nameColumns.continuation,
+    fontSizePx,
+    fontFamily,
+    nameColumns.firstLine,
+  );
   const pbValues = (contact.print_book_name || []).map((item) => String(item || "").trim()).filter(Boolean);
   const paValues = (contact.print_after_address || []).map((item) => String(item || "").trim()).filter(Boolean);
   const pbText = pbValues.map((value) => `(${printBookNotePlainText(value)})`).join(" ");
@@ -1695,7 +1740,7 @@ function renderAddressBookPdfContactPreviewRows(contact) {
     phoneIndex: index,
     mainHtml: index === 0
       ? `<div class="address-book-pdf-contact-name${singleNameLine ? " is-single-line" : ""}">${contactNameHtmlForAddressBookPdf(line, contact)}${pbInlineHtml}</div>`
-      : `<div class="address-book-pdf-contact-name is-continuation" style="padding-left: ${index}ch;">${contactNameSuffixHtmlForAddressBookPdf(line, contact)}</div>`,
+      : `<div class="address-book-pdf-contact-name is-continuation">${contactNameSuffixHtmlForAddressBookPdf(line, contact)}</div>`,
   }));
   const belowLines = [];
   if (pbOwnLine) belowLines.push({ kind: "pb", text: pbOwnLine, html: pbOwnLineHtml });

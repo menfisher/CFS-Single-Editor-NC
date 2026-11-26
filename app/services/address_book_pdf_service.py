@@ -1189,6 +1189,27 @@ def _contact_text_columns(
     return phone_x, phone_code_x, main_text_x, continuation_x, name_max_width
 
 
+def _contact_name_line_width(
+    text: str,
+    size: float,
+    font_family: str,
+    *,
+    bold_last_name: bool = False,
+) -> float:
+    """Width of a family line. First line bolds the surname; never reserves ellipsis."""
+    value = _clean(text)
+    if not value:
+        return 0.0
+    if not bold_last_name:
+        return _text_width(value, size, font_family)
+    comma_index = value.find(",")
+    if comma_index > 0:
+        last_name = value[:comma_index]
+        rest = value[comma_index:]
+        return _text_width(last_name, size, font_family, bold=True) + _text_width(rest, size, font_family)
+    return _text_width(value, size, font_family, bold=True)
+
+
 def _phone_display_text(phone_value: object) -> str:
     cleaned = _clean(phone_value)
     digits = _phone_digits(cleaned)
@@ -1672,6 +1693,19 @@ def _meeting_row_font_size_pt(row: dict, default: float) -> float:
         if size > 0:
             return max(minimum, size)
     return max(minimum, default)
+
+
+def _meeting_space_before_font_size_pt(section: dict | None, default: float = 7.0) -> float:
+    if not isinstance(section, dict):
+        return max(1.0, default)
+    for key in ("space_before_font_size", "space_before_font_size_pt"):
+        try:
+            size = float(section.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if size > 0:
+            return max(1.0, min(12.0, size))
+    return max(1.0, default)
 
 
 def _meeting_row_line_height(row: dict, default: float) -> float:
@@ -2272,15 +2306,16 @@ def _build_toc_pages(
         page = _PdfPage(page_width, page_height)
         toc_pages.append(page)
         y = page_height - margin_top
+        # Reserve the same title-band inset on every TOC page so continuation
+        # Field headings and meetings share page 1's y, even when the date title
+        # is not repeated (page 2+).
+        y -= line_step * 0.85
         if len(toc_pages) == 1:
-            y -= line_step * 0.85
             title_x = _center_text_x(
                 title_text, title_size, page_width, margin_left, margin_right, font_family, bold=True
             )
             page.lines.append(_PdfLine(title_text, title_x, y, title_size, bold=True))
-            y -= line_step * 1.7
-        else:
-            y -= line_step * 1.25
+        y -= line_step * 1.7
         return page
 
     def add_footer(page: _PdfPage) -> None:
@@ -2965,7 +3000,7 @@ def build_address_book_pdf(
                 current_toc_entry.heading_lines.append(heading_line)
             add_rule()
 
-    def ensure_space(lines_needed: int, field_name: str = "", meeting_heading: str = "") -> None:
+    def ensure_space(lines_needed: int | float, field_name: str = "", meeting_heading: str = "") -> None:
         if y - (lines_needed * line_step) < margin_bottom:
             add_footer(field_name)
             new_page(field_name, meeting_heading)
@@ -3008,36 +3043,41 @@ def build_address_book_pdf(
         )
 
     def add_contact_name_line(line: str, x: float, *, bold_last_name: bool) -> None:
-        safe_line = fit_line(line, x)
         if not bold_last_name:
-            add_text(safe_line, x)
+            add_text(line, x)
             return
-        comma_index = safe_line.find(",")
+        comma_index = line.find(",")
         last_name = ""
         rest = ""
         if comma_index > 0:
-            last_name = safe_line[:comma_index]
-            rest = safe_line[comma_index:]
+            last_name = line[:comma_index]
+            rest = line[comma_index:]
         elif comma_index < 0:
-            semicolon_index = safe_line.find("; ")
+            semicolon_index = line.find("; ")
             if semicolon_index > 0:
-                last_name = safe_line[:semicolon_index]
-                rest = safe_line[semicolon_index:]
-            elif safe_line.endswith(";"):
-                last_name = safe_line[:-1]
+                last_name = line[:semicolon_index]
+                rest = line[semicolon_index:]
+            elif line.endswith(";"):
+                last_name = line[:-1]
                 rest = ";"
             else:
-                add_text(safe_line, x, bold=True)
+                add_text(line, x, bold=True)
                 return
         if not last_name:
-            add_text(safe_line, x)
+            add_text(line, x)
             return
         rest_x = x + _text_width(last_name, font_size, font_family, bold=True)
         page.lines.append(_PdfLine(text=last_name, x=x, y=y, size=font_size, bold=True))
         if rest:
-            page.lines.append(_PdfLine(text=fit_line(rest, rest_x), x=rest_x, y=y, size=font_size))
+            page.lines.append(_PdfLine(text=rest, x=rest_x, y=y, size=font_size))
 
-    def contact_name_lines(contact: dict[str, Any], name: str, max_width: float) -> list[str]:
+    def contact_name_lines(
+        contact: dict[str, Any],
+        name: str,
+        max_width: float,
+        *,
+        first_line_max_width: float | None = None,
+    ) -> list[str]:
         from app.services.field_list_service import _wrap_contact_name_lines
 
         payload = {
@@ -3046,7 +3086,16 @@ def build_address_book_pdf(
             "children": list(contact.get("children") or []),
             "other_relationships": list(contact.get("other_relationships") or []),
         }
-        lines = _wrap_contact_name_lines(payload, lambda text: tw(text, font_size), max_width)
+        first_max = max_width if first_line_max_width is None else first_line_max_width
+        lines = _wrap_contact_name_lines(
+            payload,
+            lambda text: tw(text, font_size),
+            max_width,
+            first_line_measure_width=lambda text: _contact_name_line_width(
+                text, font_size, font_family, bold_last_name=True
+            ),
+            first_line_max_width=first_max,
+        )
         return lines or ([name] if name else [])
 
     def add_center(text: str, size: float, *, bold: bool = False, link_page_index: int | None = None) -> _PdfLine:
@@ -3248,7 +3297,7 @@ def build_address_book_pdf(
         add_row_underline()
         y -= row_line_step * row_line_count
 
-    def meeting_rows(field_name: str, meeting_name: str) -> list[dict]:
+    def matching_preview_section(field_name: str, meeting_name: str) -> dict:
         selected_field = _match_key(field_name)
         selected_meeting = _match_key(meeting_name)
         for section in meeting_preview_sections:
@@ -3265,12 +3314,22 @@ def build_address_book_pdf(
                 or (field_key and selected_field.startswith(field_key))
             )
             if meeting_matches and field_matches:
-                return list(section.get("rows") or [])
+                return section if isinstance(section, dict) else {}
         for section in meeting_preview_sections:
             meeting_key = _match_key(section.get("meeting"))
             if meeting_key == selected_meeting or meeting_key.startswith(selected_meeting) or selected_meeting.startswith(meeting_key):
-                return list(section.get("rows") or [])
-        return []
+                return section if isinstance(section, dict) else {}
+        return {}
+
+    def meeting_rows(field_name: str, meeting_name: str) -> list[dict]:
+        return list(matching_preview_section(field_name, meeting_name).get("rows") or [])
+
+    def meetingdata_space_before_height(field_name: str, meeting_name: str, *, field_end_list: bool) -> float:
+        if field_end_list:
+            return line_step
+        preview_section = matching_preview_section(field_name, meeting_name)
+        space_before_size = _meeting_space_before_font_size_pt(preview_section)
+        return space_before_size * current_meeting_line_height
 
     def estimate_contact_block_height(contact: dict[str, Any]) -> float:
         phones = list(contact.get("phones") or [])
@@ -3298,18 +3357,25 @@ def build_address_book_pdf(
                     text_width=lambda value, size=font_size: tw(value, size),
                 )
             )
-        name_lines = contact_name_lines(contact, name, name_max_width)
+        first_line_max_width = max(24.0, page_width - margin_right - main_text_x)
+        name_lines = contact_name_lines(
+            contact, name, name_max_width, first_line_max_width=first_line_max_width
+        )
         phones_drawn = min(len(phones), len(name_lines))
         extra_rows = max(0, len(phones) - phones_drawn, address_line_count)
         return (len(name_lines) + extra_rows + 0.25) * line_step
 
-    def estimate_bible_block_height(field_name: str, meeting_name: str) -> float:
+    def estimate_bible_block_height(field_name: str, meeting_name: str, meeting: dict | None = None) -> float:
         if not include_bible_study:
             return 0.0
         rows = meeting_rows(field_name, meeting_name)
         if not rows:
             return 0.0
-        total = line_step
+        total = meetingdata_space_before_height(
+            field_name,
+            meeting_name,
+            field_end_list=_is_field_end_list_meeting(meeting or {}),
+        )
         for row in rows:
             row_font_size = _meeting_row_font_size_pt(row, font_size)
             row_line_step = row_font_size * _meeting_row_line_height(row, current_meeting_line_height)
@@ -3324,7 +3390,7 @@ def build_address_book_pdf(
             height += line_step * 3
             for contact in related_meeting.get("contacts") or []:
                 height += estimate_contact_block_height(contact)
-        height += estimate_bible_block_height(field_name, meeting_name)
+        height += estimate_bible_block_height(field_name, meeting_name, meeting)
         return height
 
     meeting_separator_lines = 2
@@ -3554,27 +3620,26 @@ def build_address_book_pdf(
                         cursor += width
 
                 def drawn_name_end(line: str, x: float) -> float:
-                    safe_line = fit_line(line, x)
-                    comma_index = safe_line.find(",")
+                    comma_index = line.find(",")
                     last_name = ""
                     rest = ""
                     if comma_index > 0:
-                        last_name = safe_line[:comma_index]
-                        rest = safe_line[comma_index:]
+                        last_name = line[:comma_index]
+                        rest = line[comma_index:]
                     elif comma_index < 0:
-                        semicolon_index = safe_line.find("; ")
+                        semicolon_index = line.find("; ")
                         if semicolon_index > 0:
-                            last_name = safe_line[:semicolon_index]
-                            rest = safe_line[semicolon_index:]
-                        elif safe_line.endswith(";"):
-                            last_name = safe_line[:-1]
+                            last_name = line[:semicolon_index]
+                            rest = line[semicolon_index:]
+                        elif line.endswith(";"):
+                            last_name = line[:-1]
                             rest = ";"
                         else:
-                            return x + _text_width(safe_line, font_size, font_family, bold=True)
+                            return x + _text_width(line, font_size, font_family, bold=True)
                     if not last_name:
-                        return x + tw(safe_line, font_size)
+                        return x + tw(line, font_size)
                     rest_x = x + _text_width(last_name, font_size, font_family, bold=True)
-                    return rest_x + tw(fit_line(rest, rest_x), font_size) if rest else rest_x
+                    return rest_x + tw(rest, font_size) if rest else rest_x
 
                 for contact in contacts:
                     phones = list(contact.get("phones") or [])
@@ -3604,7 +3669,10 @@ def build_address_book_pdf(
                             text_width=lambda value, size=font_size: tw(value, size),
                         ):
                             address_lines.append((line, uri, has_coordinates))
-                    name_lines = contact_name_lines(contact, name, name_max_width)
+                    first_line_max_width = max(24.0, page_width - margin_right - main_text_x)
+                    name_lines = contact_name_lines(
+                        contact, name, name_max_width, first_line_max_width=first_line_max_width
+                    )
                     pb_values = [kept_note(item) for item in (contact.get("print_book_name") or [])]
                     pb_values = [item for item in pb_values if item]
                     pa_values = [kept_note(item) for item in (contact.get("print_after_address") or [])]
@@ -3744,15 +3812,21 @@ def build_address_book_pdf(
                     for row in first_chunk
                 )
                 first_chunk_is_table = chunk_is_table_chunk(first_chunk)
+                space_before_height = meetingdata_space_before_height(
+                    field_name,
+                    meeting_name,
+                    field_end_list=is_field_end_list,
+                )
+                space_before_lines = (space_before_height / line_step) if line_step else 1.0
                 if first_chunk_print_new_page and not first_chunk_unassociated:
                     start_print_new_page_for_table()
                 if not first_chunk_unassociated:
                     if first_chunk_is_table and first_chunk:
-                        first_row_lines = _meeting_row_line_count(first_chunk[0], **meeting_row_count_kwargs) + 1
-                        ensure_space(first_row_lines, field_name, heading)
+                        first_row_lines = _meeting_row_line_count(first_chunk[0], **meeting_row_count_kwargs)
+                        ensure_space(first_row_lines + space_before_lines, field_name, heading)
                     else:
-                        ensure_space(first_chunk_lines + 1, field_name, heading)
-                    y -= line_step
+                        ensure_space(first_chunk_lines + space_before_lines, field_name, heading)
+                    y -= space_before_height
                 for chunk in bible_chunks:
                     chunk_lines = sum(_meeting_row_line_count(row, **meeting_row_count_kwargs) for row in chunk)
                     no_meeting_association = (not is_field_end_list) and any(

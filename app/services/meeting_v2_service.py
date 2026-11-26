@@ -11,7 +11,12 @@ from html.parser import HTMLParser
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from app.database import fetch_all, fetch_one, get_connection
+from app.database import (
+    _ensure_meeting_space_before_font_size_column,
+    fetch_all,
+    fetch_one,
+    get_connection,
+)
 from app.services.contact_service import get_meeting_sections
 from app.services.meeting_editor_model import (
     build_editor_section_from_legacy_section,
@@ -30,6 +35,9 @@ MEETING_FONT_SIZE_STEP_PT = 0.5
 MEETING_ROW_FONT_SIZE_MAX_PT = 12.0
 MEETING_ROW_FONT_SIZE_MIN_PT = 5.0
 MEETING_SPACER_FONT_SIZE_MIN_PT = 1.0
+# One book line at the pocket-book default (7pt × line height), matching the
+# previous fixed gap after meeting contacts and before MeetingData.
+DEFAULT_SPACE_BEFORE_FONT_SIZE_PT = 7.0
 
 
 def _meeting_font_size_options(min_pt: float, max_pt: float = MEETING_ROW_FONT_SIZE_MAX_PT) -> list[str]:
@@ -187,6 +195,16 @@ def _normalize_row_format_code(raw_value, row_kind) -> str:
     if parsed < min_pt:
         parsed = min_pt
     return f"{parsed:.1f}"
+
+
+def _normalize_space_before_font_size(raw_value) -> float:
+    parsed = _parse_font_size_code(raw_value)
+    if parsed is None:
+        return DEFAULT_SPACE_BEFORE_FONT_SIZE_PT
+    return round(
+        max(MEETING_SPACER_FONT_SIZE_MIN_PT, min(MEETING_ROW_FONT_SIZE_MAX_PT, parsed)),
+        1,
+    )
 
 
 def _field_list_bible_study_base_font_size_pt() -> float:
@@ -1410,6 +1428,7 @@ def _ensure_meeting_v2_sections_once() -> None:
                 """
             )
             conn.commit()
+        _ensure_meeting_space_before_font_size_column(conn)
         layout_columns = {
             str(row["name"])
             for row in conn.execute("PRAGMA table_info(meeting_section_layout_v2)").fetchall()
@@ -2255,6 +2274,9 @@ def get_meeting_v2_section_detail(
         return None
 
     section = dict(section_row)
+    section["space_before_font_size"] = _normalize_space_before_font_size(
+        section.get("space_before_font_size")
+    )
     preset_row = fetch_one(
         """
         SELECT *
@@ -2410,6 +2432,7 @@ def save_meeting_v2_section(
     meeting_table_column_gap_px=None,
     screen_preview_scale=None,
     line_height=None,
+    space_before_font_size=None,
 ) -> None:
     ensure_meeting_v2_sections()
     flow_item_updates = flow_item_updates or []
@@ -2480,14 +2503,28 @@ def save_meeting_v2_section(
             ).fetchall()
         }
 
-        conn.execute(
-            """
-            UPDATE meeting_sections_v2
-            SET notes = ?
-            WHERE id = ?
-            """,
-            (section_notes or "", section_id),
-        )
+        if space_before_font_size is None or str(space_before_font_size).strip() == "":
+            conn.execute(
+                """
+                UPDATE meeting_sections_v2
+                SET notes = ?
+                WHERE id = ?
+                """,
+                (section_notes or "", section_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE meeting_sections_v2
+                SET notes = ?, space_before_font_size = ?
+                WHERE id = ?
+                """,
+                (
+                    section_notes or "",
+                    _normalize_space_before_font_size(space_before_font_size),
+                    section_id,
+                ),
+            )
         preset = None
         if book_layout_preset_id:
             preset_row = conn.execute(
@@ -3856,5 +3893,8 @@ def get_meeting_v2_section_print_preview(section_id: int, *, ensure: bool = True
         "line_height": _coerce_meeting_line_height(layout.get("line_height"), 1.2),
         "preset_name": str(layout.get("preset_name") or ""),
     }
+    from app.services.field_end_list_service import is_field_end_list
+
+    section["is_field_end_list"] = is_field_end_list(section.get("field_name"), section.get("meeting_name"))
     section["print_blocks"] = _build_meeting_print_blocks(section.get("rows") or [])
     return section

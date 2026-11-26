@@ -640,6 +640,25 @@ window.addEventListener("DOMContentLoaded", () => {
   };
 
   const renderRelationshipSuffixHtml = (contact, suffixText = "") => {
+    const fromLine = String(suffixText || "").trim();
+    const renderSegments = (segments) => segments.map((segment) => {
+      const colonIndex = segment.indexOf(": ");
+      if (colonIndex >= 0) {
+        const label = segment.slice(0, colonIndex);
+        const name = segment.slice(colonIndex + 2);
+        return `<span class="field-list-relationship-pair">${escapeHtml(label)}: ${escapeHtml(name)}</span>`;
+      }
+      return `<span class="field-list-relationship-child">${escapeHtml(segment)}</span>`;
+    }).join(", ");
+    if (fromLine) {
+      return renderSegments(
+        relationshipSuffixTypedSegments({
+          name: `; ${fromLine.replace(/^;\s*/, "").replace(/^,\s*/, "")}`,
+          children: [],
+          other_relationships: [],
+        }).map((segment) => segment.text)
+      );
+    }
     const segmentsFromContact = [];
     (contact?.children || []).forEach((child) => {
       const name = String(child || "").trim();
@@ -656,15 +675,7 @@ window.addEventListener("DOMContentLoaded", () => {
       }
     });
     if (segmentsFromContact.length) return segmentsFromContact.join(", ");
-    return relationshipSuffixSegments(contact).map((segment) => {
-      const colonIndex = segment.indexOf(": ");
-      if (colonIndex >= 0) {
-        const label = segment.slice(0, colonIndex);
-        const name = segment.slice(colonIndex + 2);
-        return `<span class="field-list-relationship-pair">${escapeHtml(label)}: ${escapeHtml(name)}</span>`;
-      }
-      return `<span class="field-list-relationship-child">${escapeHtml(segment)}</span>`;
-    }).join(", ");
+    return renderSegments(relationshipSuffixSegments(contact));
   };
 
   const renderContactNameHtml = (name, contact = null) => {
@@ -677,7 +688,7 @@ window.addEventListener("DOMContentLoaded", () => {
             ? renderContactNameLineHtml(line, true, contact)
             : `<span class="field-list-contact-name-continuation">${renderRelationshipSuffixHtml(contact, line.replace(/^;\s*/, "").replace(/^ /, ""))}</span>`;
           const leadingSpace = index > 0 && line.startsWith(" ") ? " " : "";
-          const indentStyle = index > 0 ? ` style="padding-left: ${index}ch;"` : "";
+          const indentStyle = index > 0 ? ` style="padding-left: 1ch;"` : "";
           return `<div class="field-list-contact-name-line${index > 0 ? " is-indented" : ""}"${indentStyle}>${leadingSpace}${html}</div>`;
         })
         .join("");
@@ -722,20 +733,37 @@ window.addEventListener("DOMContentLoaded", () => {
   };
 
   const getTextColumnWidthPx = (contact = null) => {
-    const fontSizePt = Number(settings.baseFontSizePt || 10);
-    const fontSizePx = (fontSizePt * 96) / 72;
     const columnWidthPx = getEffectiveColumnWidthIn() * 96;
-    // Reserve through the one-space indent under the shared 2-character code name column.
-    const fixedPhoneColumnPx = measureTextWidth("000-000-0000", "normal")
-      + measureTextWidth(" ", "normal")
+    const space = measureTextWidth(" ", "normal");
+    const phoneReserve = measureTextWidth("000-000-0000", "normal")
+      + space
       + measureTextWidth("00", "normal")
-      + measureTextWidth(" ", "normal")
-      + measureTextWidth(" ", "normal");
-    return Math.max(120, columnWidthPx - fixedPhoneColumnPx);
+      + space;
+    return Math.max(120, columnWidthPx - phoneReserve - space);
+  };
+
+  const getFirstLineNameWidthPx = () => {
+    const columnWidthPx = getEffectiveColumnWidthIn() * 96;
+    const space = measureTextWidth(" ", "normal");
+    const phoneReserve = measureTextWidth("000-000-0000", "normal")
+      + space
+      + measureTextWidth("00", "normal")
+      + space;
+    return Math.max(120, columnWidthPx - phoneReserve);
   };
 
   const textFitsWidth = (text, widthPx, style = "normal") => {
     return measureTextWidth(text, style) <= widthPx;
+  };
+
+  const measureContactNameFirstLine = (text) => {
+    const value = String(text || "");
+    const commaIndex = value.indexOf(",");
+    if (commaIndex > 0) {
+      return measureTextWidth(value.slice(0, commaIndex), "bold")
+        + measureTextWidth(value.slice(commaIndex), "normal");
+    }
+    return measureTextWidth(value, "bold");
   };
 
   const wrapFieldListNameWords = (text, widthPx) => {
@@ -789,62 +817,84 @@ window.addEventListener("DOMContentLoaded", () => {
     return wrapFieldListNameWords(value, widthPx);
   };
 
-  const packTypedSuffixLines = (typedSegments, widthPx, { semicolonOnPreviousLine = false } = {}) => {
-    if (!typedSegments.length) return [];
+  const packTypedSuffixLines = (
+    typedSegments,
+    widthPx,
+    {
+      semicolonOnPreviousLine = false,
+      initialText = "",
+      firstLineMeasure = null,
+      firstLineMaxWidth = null,
+    } = {},
+  ) => {
+    if (!typedSegments.length) return initialText ? [initialText] : [];
+    const firstMeasure = firstLineMeasure || ((text) => measureTextWidth(text, "normal"));
+    const firstMax = firstLineMaxWidth == null ? widthPx : firstLineMaxWidth;
+    const lineFits = (text, firstLine) => (
+      firstLine ? firstMeasure(text) <= firstMax : textFitsWidth(text, widthPx, "normal")
+    );
     const lines = [];
-    let current = "";
-    let isFirstSuffixLine = true;
+    let current = initialText;
+    let onFirstLine = true;
+    let attachedSuffix = false;
 
     typedSegments.forEach(({ kind, text }) => {
       let piece;
-      if (!current) {
-        let prefix;
-        if (semicolonOnPreviousLine && isFirstSuffixLine) {
-          prefix = "";
-        } else if (kind === "child" && isFirstSuffixLine) {
-          prefix = "; ";
-        } else if (isFirstSuffixLine) {
-          prefix = " ";
-        } else {
-          prefix = ", ";
-        }
-        piece = `${prefix}${text}`;
+      if (current) {
+        piece = (!attachedSuffix && kind === "child") ? `${current}; ${text}` : `${current}, ${text}`;
+      } else if (!attachedSuffix) {
+        if (semicolonOnPreviousLine && kind === "child") piece = text;
+        else if (kind === "child") piece = `; ${text}`;
+        else piece = ` ${text}`;
+      } else if (kind === "child") {
+        piece = text;
       } else {
-        piece = `${current}, ${text}`;
+        piece = ` ${text}`;
       }
 
-      if (current && !textFitsWidth(piece, widthPx, "normal")) {
-        isFirstSuffixLine = false;
-        let nextText;
+      if (current && !lineFits(piece, onFirstLine)) {
         if (kind === "child") {
-          lines.push(current.endsWith(",") ? current : `${current},`);
-          nextText = text;
+          const trailing = attachedSuffix ? "," : ";";
+          lines.push(current.endsWith(trailing) ? current : `${current}${trailing}`);
+          attachedSuffix = true;
+          onFirstLine = false;
+          if (!lineFits(text, false)) {
+            lines.push(...wrapRelationshipText(text, widthPx));
+            current = "";
+          } else {
+            current = text;
+          }
         } else {
           lines.push(current);
-          nextText = ` ${text}`;
-        }
-        if (!textFitsWidth(nextText, widthPx, "normal")) {
-          lines.push(...wrapRelationshipText(nextText.trimStart(), widthPx));
-          current = "";
-        } else {
-          current = nextText;
+          const nextText = ` ${text}`;
+          attachedSuffix = true;
+          onFirstLine = false;
+          if (!lineFits(nextText, false)) {
+            lines.push(...wrapRelationshipText(nextText.trimStart(), widthPx));
+            current = "";
+          } else {
+            current = nextText;
+          }
         }
       } else if (!current) {
-        if (!textFitsWidth(piece, widthPx, "normal")) {
+        if (!lineFits(piece, onFirstLine)) {
           lines.push(...wrapRelationshipText(piece.trimStart(), widthPx));
-          isFirstSuffixLine = false;
+          attachedSuffix = true;
+          onFirstLine = false;
           current = "";
         } else {
           current = piece;
+          attachedSuffix = true;
         }
       } else {
         current = piece;
+        attachedSuffix = true;
       }
     });
 
     if (current) {
-      if (!textFitsWidth(current, widthPx, "normal")) {
-        lines.push(...wrapRelationshipText(current.trimStart(), widthPx));
+      if (!lineFits(current, onFirstLine)) {
+        lines.push(...wrapRelationshipText(onFirstLine ? current : current.trimStart(), widthPx));
       } else {
         lines.push(current);
       }
@@ -856,29 +906,24 @@ window.addEventListener("DOMContentLoaded", () => {
     const typedSegments = relationshipSuffixTypedSegments(contact);
     const head = contactNameHead(contact, String(name || "").trim());
     const widthPx = getTextColumnWidthPx(contact);
+    const firstLineWidthPx = getFirstLineNameWidthPx();
     if (!typedSegments.length) {
       const value = String(name || "").trim();
-      if (textFitsWidth(value, widthPx, "bold")) return [value];
-      return [value];
+      if (measureContactNameFirstLine(value) <= firstLineWidthPx) return [value];
+      return wrapFieldListNameWords(value, widthPx);
     }
-    const suffix = formatNameSuffixForParts(contact?.children, contact?.other_relationships);
+    const suffix = formatNameSuffixForParts(contact?.children, contact?.other_relationships)
+      || (typedSegments[0].kind === "child"
+        ? `; ${typedSegments.map((segment) => segment.text).join(", ")}`
+        : `, ${typedSegments.map((segment) => segment.text).join(", ")}`);
     const full = `${head}${suffix}`;
-    if (textFitsWidth(full, widthPx, "bold")) return [full];
+    if (measureContactNameFirstLine(full) <= firstLineWidthPx) return [full];
 
-    let headLine = head;
-    let semicolonOnPreviousLine = false;
-    if (typedSegments.length && typedSegments[0].kind === "child") {
-      const headWithSemi = `${head};`;
-      if (textFitsWidth(headWithSemi, widthPx, "bold")) {
-        headLine = headWithSemi;
-        semicolonOnPreviousLine = true;
-      }
-    }
-
-    return [
-      headLine,
-      ...packTypedSuffixLines(typedSegments, widthPx, { semicolonOnPreviousLine }),
-    ];
+    return packTypedSuffixLines(typedSegments, widthPx, {
+      initialText: head,
+      firstLineMeasure: measureContactNameFirstLine,
+      firstLineMaxWidth: firstLineWidthPx,
+    });
   };
 
   const getPrintBookNoteValues = (contact) => (

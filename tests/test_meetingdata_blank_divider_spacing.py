@@ -14,6 +14,7 @@ from app.services.meeting_v2_service import (
     MEETING_FONT_SIZE_OPTIONS,
     MEETING_ROW_FONT_SIZE_OPTIONS,
     _normalize_row_format_code,
+    _normalize_space_before_font_size,
 )
 
 
@@ -94,6 +95,39 @@ def _label_top(pdf: bytes, label: str) -> float:
         raise AssertionError(f"missing {label!r}")
     finally:
         document.close()
+
+
+def _contact_to_meetingdata_gap(space_before_font_size: float) -> float:
+    pdf = build_address_book_pdf(
+        fields=[
+            {
+                "name": "Field A",
+                "meetings": [
+                    {
+                        "name": "Meeting 1",
+                        "contacts": [{"name": "LastContact", "phones": [], "addresses": []}],
+                    }
+                ],
+            }
+        ],
+        meeting_preview_sections=[
+            {
+                "field": "Field A",
+                "meeting": "Meeting 1",
+                "space_before_font_size": space_before_font_size,
+                "rows": [_cell_row("FirstData")],
+            }
+        ],
+        settings={
+            "address_map_provider": "google",
+            "include_bible_study_union_info": 1,
+            "meeting_page_mode": "one_meeting",
+        },
+        layout=_LAYOUT,
+        print_order_mode="default",
+        print_order_json="",
+    )
+    return _label_top(pdf, "FirstData") - _label_top(pdf, "LastContact")
 
 
 def _gap_between(kind: str, font_size_pt: float) -> float:
@@ -207,6 +241,49 @@ class MeetingDataBlankDividerSpacingTests(unittest.TestCase):
         self.assertNotIn("0.12in", blank)
         self.assertIn("--meeting-row-font-size", divider)
         self.assertIn("--meeting-row-line-height", divider)
+
+    def test_space_before_font_size_clamps_like_blank_rows(self) -> None:
+        self.assertAlmostEqual(_normalize_space_before_font_size(""), 7.0)
+        self.assertAlmostEqual(_normalize_space_before_font_size("1.0"), 1.0)
+        self.assertAlmostEqual(_normalize_space_before_font_size("0.5"), 1.0)
+        self.assertAlmostEqual(_normalize_space_before_font_size("14.0"), 12.0)
+        self.assertAlmostEqual(_normalize_space_before_font_size("6.5"), 6.5)
+
+    def test_editor_html_has_space_before_strip_without_kind_controls(self) -> None:
+        html = (_ROOT / "app/templates/meetings/v2_section_editor.html").read_text()
+        self.assertIn("Space between Meeting and Meeting data", html)
+        self.assertIn('name="space_before_font_size"', html)
+        self.assertIn("{% if not section.is_field_end_list %}", html)
+        start = html.index("data-space-before-row")
+        end = html.index("{% for row in section.rows %}")
+        block = html[start:end]
+        self.assertIn("Font size", block)
+        self.assertNotIn("Kind", block)
+        self.assertNotIn("row_kind_primary", block)
+        self.assertNotIn("Insert Blank", block)
+        self.assertNotIn("Add Cell", block)
+        self.assertNotIn("Delete Row", block)
+        self.assertNotIn("table_start", block)
+        self.assertNotIn("row_order_", block)
+        hidden_guard = html[:start].rfind("{% if not section.is_field_end_list %}")
+        self.assertGreater(hidden_guard, 0)
+        self.assertLess(hidden_guard, start)
+
+    def test_print_preview_html_uses_space_before_spacer(self) -> None:
+        html = (_ROOT / "app/templates/meetings/v2_print_preview.html").read_text()
+        self.assertIn("print-preview-space-before", html)
+        self.assertIn("{% if not section.is_field_end_list %}", html)
+        self.assertIn("section.space_before_font_size", html)
+
+    def test_pdf_space_before_grows_gap_after_last_contact(self) -> None:
+        size_1 = _contact_to_meetingdata_gap(1.0)
+        size_7 = _contact_to_meetingdata_gap(7.0)
+        size_12 = _contact_to_meetingdata_gap(12.0)
+        self.assertGreater(size_7, size_1)
+        self.assertGreater(size_12, size_7)
+        self.assertAlmostEqual(size_7 - size_1, 6.0 * 1.2, delta=1.0)
+        self.assertAlmostEqual(size_12 - size_7, 5.0 * 1.2, delta=1.0)
+        self.assertLess(size_1, 24.0)
 
 
 if __name__ == "__main__":

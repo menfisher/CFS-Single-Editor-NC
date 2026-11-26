@@ -722,6 +722,8 @@
 
 .address-book-pdf-contact-name.is-single-line {
   white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .address-book-pdf-relationship-pair,
@@ -6773,6 +6775,19 @@ button.site-nav-dropdown-item:hover {
   font-size: 0.92rem;
 }
 
+.wysiwyg-row-toolbar.wysiwyg-space-before-toolbar {
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.wysiwyg-space-before-label {
+  min-width: 0;
+  white-space: normal;
+}
+
+.wysiwyg-space-before-row .wysiwyg-gutter {
+  padding-top: 10px;
+}
+
 .wysiwyg-row-control {
   min-width: 0;
   display: flex;
@@ -8111,12 +8126,14 @@ button.site-nav-dropdown-item:hover {
 
 .field-list-block-preview .field-list-contact-name {
   overflow: visible;
-  white-space: nowrap;
+  white-space: normal;
+  text-overflow: clip;
 }
 
 .field-list-contact-name-line {
   overflow: visible;
   white-space: nowrap;
+  text-overflow: clip;
 }
 
 .field-list-contact-name-line.is-indented {
@@ -9301,6 +9318,10 @@ button.site-nav-dropdown-item:hover {
   .wysiwyg-row-toolbar {
     grid-template-columns: 1fr 1fr;
     align-items: stretch;
+  }
+
+  .wysiwyg-row-toolbar.wysiwyg-space-before-toolbar {
+    grid-template-columns: minmax(0, 1fr) max-content;
   }
 
   .preset-layout {

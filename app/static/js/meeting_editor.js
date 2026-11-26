@@ -1229,6 +1229,24 @@ function installRowFontSizeControls() {
   syncAllRows();
 }
 
+function installSpaceBeforeFontControl() {
+  const frame = document.querySelector(".wysiwyg-frame");
+  const row = document.querySelector("[data-space-before-row]");
+  const input = document.querySelector("[data-space-before-font-size-input]");
+  if (!frame || !row || !input) return;
+
+  const apply = () => {
+    const size = parseRowFontSizePt(input.value);
+    if (size == null) return;
+    const screenPreviewScale = parseFloat(frame.dataset.screenPreviewScale || "220") || 220;
+    row.style.setProperty("--row-base-font-px", `${(size / 72) * screenPreviewScale}px`);
+    row.dataset.effectiveFontPt = String(size);
+  };
+
+  input.addEventListener("change", apply);
+  apply();
+}
+
 function syncFlowStackedPositions(grid) {
   if (!grid || !grid.classList.contains("flow-row-grid")) return;
   const slotHeights = new Map();
@@ -1484,6 +1502,7 @@ window.addEventListener("DOMContentLoaded", () => {
   installPresetSelectorAutoApply();
   installRowKindControls();
   installRowFontSizeControls();
+  installSpaceBeforeFontControl();
   installLayoutGridControls();
   installFlowColumnTextareas();
   installFlowStackedLayout();

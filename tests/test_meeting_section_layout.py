@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.database import fetch_all, fetch_one, initialize_database, set_request_db_path
 from app.services.meeting_v2_service import (
+    DEFAULT_SPACE_BEFORE_FONT_SIZE_PT,
     _ensure_section_layout,
     add_meeting_v2_cell,
     create_meeting_v2_section,
@@ -166,3 +167,56 @@ class MeetingSectionLayoutTests(unittest.TestCase):
             (304719,),
         )
         self.assertIsNone(layout)
+
+    def test_space_before_font_size_defaults_and_persists(self) -> None:
+        section_id = create_meeting_v2_section("NC Eastern", "Oxford")
+        editor = get_meeting_v2_section_editor(section_id)
+        self.assertAlmostEqual(editor["space_before_font_size"], DEFAULT_SPACE_BEFORE_FONT_SIZE_PT)
+        stored = fetch_one(
+            "SELECT space_before_font_size FROM meeting_sections_v2 WHERE id = ?",
+            (section_id,),
+        )
+        self.assertAlmostEqual(float(stored["space_before_font_size"]), 7.0)
+        row = editor["rows"][0]
+        save_meeting_v2_section(
+            section_id,
+            "",
+            editor["book_layout"]["book_layout_preset_id"],
+            editor["editor_canvas"]["base_font_size_pt"],
+            "CV",
+            [
+                {
+                    "id": row["id"],
+                    "row_order": 1,
+                    "row_kind": "content",
+                    "format_code": "",
+                    "label_text": "",
+                    "notes": "",
+                }
+            ],
+            [],
+            space_before_font_size="1.0",
+        )
+        reloaded = get_meeting_v2_section_editor(section_id)
+        self.assertAlmostEqual(reloaded["space_before_font_size"], 1.0)
+        save_meeting_v2_section(
+            section_id,
+            "",
+            editor["book_layout"]["book_layout_preset_id"],
+            editor["editor_canvas"]["base_font_size_pt"],
+            "CV",
+            [
+                {
+                    "id": row["id"],
+                    "row_order": 1,
+                    "row_kind": "content",
+                    "format_code": "",
+                    "label_text": "",
+                    "notes": "",
+                }
+            ],
+            [],
+            space_before_font_size="14.0",
+        )
+        reloaded = get_meeting_v2_section_editor(section_id)
+        self.assertAlmostEqual(reloaded["space_before_font_size"], 12.0)
