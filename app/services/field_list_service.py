@@ -1902,8 +1902,11 @@ _NOTE_SIZE_PT = re.compile(
 NOTE_SIZE_STEP = 0.5
 NOTE_SIZE_MIN_DELTA = -6.0
 NOTE_SIZE_MAX_DELTA = 8.0
-NOTE_PRINT_MIN_PT = 6.0
-NOTE_PRINT_MAX_PT = 18.0
+# Absolute safety bounds only. They must sit well below/above any real book
+# font (pocket books use ~6pt), or a reduced note line would be floored back
+# up to the base size and print at full size.
+NOTE_PRINT_MIN_PT = 2.0
+NOTE_PRINT_MAX_PT = 72.0
 
 
 def _parse_note_size_delta(value: object) -> float | None:
@@ -1928,8 +1931,19 @@ def _format_note_size_delta(value: object) -> str:
 
 
 def print_note_font_size(base_size: float, run: dict[str, Any] | None = None) -> float:
-    """Return a printed note size: book font plus the line's 0.5pt delta, clamped."""
+    """Return a printed note size: book font plus the line's 0.5pt delta.
+
+    Unsized runs print at exactly the book size. Sized runs are base + delta,
+    bounded only by the absolute safety limits (never by the book size), so a
+    reduced line is always smaller than the base and a larger one bigger.
+    """
     payload = run or {}
+    try:
+        base = float(base_size)
+    except (TypeError, ValueError):
+        base = 10.0
+    if not math.isfinite(base) or base <= 0:
+        base = 10.0
     stored = payload.get("font_size")
     if stored not in (None, ""):
         try:
@@ -1943,11 +1957,12 @@ def print_note_font_size(base_size: float, run: dict[str, Any] | None = None) ->
         delta = float(payload.get("size_delta") or 0)
     except (TypeError, ValueError):
         delta = 0.0
-    try:
-        base = float(base_size)
-    except (TypeError, ValueError):
-        base = 10.0
-    return max(NOTE_PRINT_MIN_PT, min(NOTE_PRINT_MAX_PT, base + delta))
+    if not math.isfinite(delta) or delta == 0:
+        return base
+    size = base + delta
+    # Keep a reduced line tiny-but-visible without ever exceeding the base.
+    lower = min(base, NOTE_PRINT_MIN_PT)
+    return max(lower, min(NOTE_PRINT_MAX_PT, size))
 
 
 def _html_attr_map(attrs: list[tuple[str, str | None]] | None) -> dict[str, str]:

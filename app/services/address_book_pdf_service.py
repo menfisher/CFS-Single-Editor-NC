@@ -3638,13 +3638,17 @@ def build_address_book_pdf(
                         for run in runs
                     )
 
-                def note_runs_step(runs: list[dict]) -> float:
+                def note_runs_step(runs: list[dict], shrink: bool = False) -> float:
+                    # The step follows the sized type: bigger lines grow the row,
+                    # and a reduced line that shares no row with a phone shrinks it.
                     sizes = [
                         note_run_size(run)
                         for run in runs
                         if str(run.get("text") or "").strip()
                     ]
                     peak = max(sizes) if sizes else font_size
+                    if shrink and sizes:
+                        return peak * current_meeting_line_height
                     return max(line_step, peak * current_meeting_line_height)
 
                 def add_note_runs(runs: list[dict], x: float) -> None:
@@ -3826,7 +3830,10 @@ def build_address_book_pdf(
                     for line_index in range(max(0, len(phones) - phones_drawn, len(below_lines))):
                         row_step = line_step
                         if line_index < len(below_lines) and below_lines[line_index][0] in ("pb", "pa"):
-                            row_step = note_runs_step(below_lines[line_index][1])
+                            row_step = note_runs_step(
+                                below_lines[line_index][1],
+                                shrink=(phones_drawn + line_index) >= len(phones),
+                            )
                         ensure_space(row_step / line_step if line_step else 1, field_name, heading)
                         phone_index = phones_drawn + line_index
                         if phone_index < len(phones):

@@ -517,3 +517,155 @@ class FamilyOnlyNameBoldTests(unittest.TestCase):
         self.assertFalse(any("Bold" in font for font in fonts["given"]))
         self.assertFalse(any("Bold" in font for font in fonts["address"]))
         self.assertFalse(any("Bold" in font for font in fonts["child"]))
+
+
+# Real shape stored in the live DB for the user's "live primarily in SD" notes:
+# one span (size delta + calc style) wrapping the prefix AND the italic text,
+# an empty trailing <em>, then a <br> and an unsized second line.
+REAL_STORED_PB = (
+    '<span data-note-size-delta="-3" style="font-size: calc(1em + -3pt)">'
+    "pb/ <em>(live primarily in SD)</em></span><em></em><br>wifi - NETGEAR65, fancymango563"
+)
+REAL_STORED_PA = REAL_STORED_PB.replace("pb/", "pa/")
+
+
+class SmallerNoteSizePrintTests(unittest.TestCase):
+    def _span_sizes(self, notes: str, base_pt: float, trim_width_in: float = 8.5) -> dict[str, float]:
+        tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(tempdir.name) / "app.sqlite3")
+        initialize_database()
+        before, after = _parse_print_book_notes(notes)
+        try:
+            pdf = build_address_book_pdf(
+                fields=[
+                    {
+                        "name": "NC Eastern",
+                        "meetings": [
+                            {
+                                "name": "OXFORD",
+                                "contacts": [
+                                    {
+                                        "name": "SIEGEL, Darryl & Colleen",
+                                        "phones": [],
+                                        "addresses": [],
+                                        "print_book_name": before,
+                                        "print_after_address": after,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+                meeting_preview_sections=[],
+                settings={"meeting_page_mode": "one_meeting", "include_bible_study_union_info": 0},
+                layout={
+                    "trim_width_in": trim_width_in,
+                    "trim_height_in": 11,
+                    "base_font_size_pt": base_pt,
+                    "font_family": "Arial",
+                },
+                print_order_mode="default",
+                print_order_json="",
+            )
+        finally:
+            set_request_db_path(None)
+            tempdir.cleanup()
+        document = fitz.open(stream=pdf, filetype="pdf")
+        page = next(item for item in document if "SIEGEL" in item.get_text() and "live primarily" in item.get_text())
+        sizes: dict[str, float] = {}
+        ys: dict[str, float] = {}
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text") or ""
+                    if "SIEGEL" in text:
+                        sizes["name"] = span["size"]
+                    elif "live primarily" in text:
+                        sizes["note"] = span["size"]
+                        ys["note"] = span["bbox"][1]
+                    elif "wifi" in text:
+                        sizes["wifi"] = span["size"]
+        sizes.update({f"{key}_y": value for key, value in ys.items()})
+        return sizes
+
+    def test_stored_shape_parses_with_negative_delta_and_no_prefix(self) -> None:
+        before, after = _parse_print_book_notes(REAL_STORED_PB)
+        self.assertEqual(len(before), 1)
+        self.assertEqual(after, [])
+        runs = print_book_note_runs(before[0])
+        text_runs = [run for run in runs if run["text"].strip()]
+        self.assertEqual([(r["text"], r["italic"], r["size_delta"]) for r in text_runs], [("(live primarily in SD)", True, -3.0)])
+        self.assertNotIn("pb/", print_book_note_display(before[0]))
+
+    def test_note_font_size_is_not_floored_to_book_size(self) -> None:
+        from app.services.field_list_service import print_note_font_size
+
+        self.assertAlmostEqual(print_note_font_size(6, {"size_delta": -3.0}), 3.0)
+        self.assertAlmostEqual(print_note_font_size(6, {"size_delta": -0.5}), 5.5)
+        self.assertAlmostEqual(print_note_font_size(10, {"size_delta": -3.0}), 7.0)
+        self.assertAlmostEqual(print_note_font_size(6, {"size_delta": 1.5}), 7.5)
+        # Unsized runs are always exactly the book size, even tiny or huge books.
+        self.assertEqual(print_note_font_size(5, {}), 5.0)
+        self.assertEqual(print_note_font_size(24, {"size_delta": 0.0}), 24.0)
+
+    def test_pa_note_with_negative_delta_prints_smaller_than_book_size_pocket_book(self) -> None:
+        sizes = self._span_sizes(REAL_STORED_PA, base_pt=6.0)
+        self.assertAlmostEqual(sizes["name"], 6.0, places=1)
+        self.assertAlmostEqual(sizes["note"], 3.0, places=1)
+        self.assertLess(sizes["note"], sizes["name"])
+        self.assertNotIn("wifi", sizes)  # non pb/pa lines never print in the book
+
+    def test_pb_note_with_negative_delta_prints_smaller_than_book_size_pocket_book(self) -> None:
+        sizes = self._span_sizes(REAL_STORED_PB, base_pt=6.0)
+        self.assertAlmostEqual(sizes["name"], 6.0, places=1)
+        self.assertAlmostEqual(sizes["note"], 3.0, places=1)
+        self.assertLess(sizes["note"], sizes["name"])
+
+    def test_pb_own_line_negative_delta_prints_smaller(self) -> None:
+        # Narrow page forces the pb note onto its own line below the name.
+        sizes = self._span_sizes(REAL_STORED_PB, base_pt=6.0, trim_width_in=1.6)
+        self.assertAlmostEqual(sizes["note"], 3.0, places=1)
+        self.assertLess(sizes["note"], sizes["name"])
+
+    def test_half_point_reduction_is_honored(self) -> None:
+        note = REAL_STORED_PA.replace('"-3"', '"-0.5"').replace("+ -3pt", "+ -0.5pt")
+        sizes = self._span_sizes(note, base_pt=6.0)
+        self.assertAlmostEqual(sizes["note"], 5.5, places=1)
+
+    def test_unsized_pa_line_after_sized_line_stays_at_book_size(self) -> None:
+        notes = REAL_STORED_PA + "\n" + "pa/ plain second line"
+        tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(tempdir.name) / "app.sqlite3")
+        initialize_database()
+        _before, after = _parse_print_book_notes(notes)
+        self.assertEqual(len(after), 2)
+        try:
+            pdf = build_address_book_pdf(
+                fields=[{"name": "NC Eastern", "meetings": [{"name": "OXFORD", "contacts": [
+                    {"name": "SIEGEL, Darryl & Colleen", "phones": [], "addresses": [], "print_after_address": after}
+                ]}]}],
+                meeting_preview_sections=[],
+                settings={"meeting_page_mode": "one_meeting", "include_bible_study_union_info": 0},
+                layout={"trim_width_in": 8.5, "trim_height_in": 11, "base_font_size_pt": 6.0, "font_family": "Arial"},
+                print_order_mode="default",
+                print_order_json="",
+            )
+        finally:
+            set_request_db_path(None)
+            tempdir.cleanup()
+        document = fitz.open(stream=pdf, filetype="pdf")
+        page = next(item for item in document if "plain second line" in item.get_text())
+        sizes: dict[str, float] = {}
+        tops: dict[str, float] = {}
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text") or ""
+                    for key in ("live primarily", "plain second line"):
+                        if key in text:
+                            sizes[key] = span["size"]
+                            tops[key] = span["origin"][1]
+        self.assertAlmostEqual(sizes["live primarily"], 3.0, places=1)
+        self.assertAlmostEqual(sizes["plain second line"], 6.0, places=1)
+        # Line height follows the sized type: the small line takes a smaller step.
+        self.assertLess(tops["plain second line"] - tops["live primarily"], 6.0 * 1.2)
