@@ -1455,23 +1455,31 @@ class _InlineHtmlStyleParser(HTMLParser):
         self.lines: list[list[dict[str, Any]]] = [[]]
         self.active: set[str] = set()
         self._style_stack: list[set[str]] = []
+        self.size_stack: list[tuple[float, float | None]] = []
 
     def _styles_from_attrs(self, attrs: list[tuple[str, str | None]]) -> set[str]:
+        from app.services.field_list_service import _styles_from_style_attr
+
         style_attr = ""
         for key, value in attrs:
             if str(key or "").lower() == "style":
-                style_attr = str(value or "").lower()
+                style_attr = str(value or "")
                 break
-        found: set[str] = set()
-        if not style_attr:
-            return found
-        if "italic" in style_attr:
-            found.add("italic")
-        if "bold" in style_attr or "font-weight:700" in style_attr.replace(" ", ""):
-            found.add("bold")
-        if "underline" in style_attr:
-            found.add("underline")
-        return found
+        return _styles_from_style_attr(style_attr)
+
+    def _current_size_fields(self) -> tuple[float, float | None]:
+        return self.size_stack[-1] if self.size_stack else (0.0, None)
+
+    def _push_size(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        from app.services.field_list_service import note_size_from_attrs
+
+        delta, absolute, found = note_size_from_attrs(attrs) if tag == "span" else (0.0, None, False)
+        if found and absolute is not None:
+            self.size_stack.append((0.0, absolute))
+        elif found:
+            self.size_stack.append((delta, None))
+        else:
+            self.size_stack.append(self._current_size_fields())
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = str(tag or "").lower()
@@ -1486,31 +1494,38 @@ class _InlineHtmlStyleParser(HTMLParser):
         for item in added:
             self.active.add(item)
         self._style_stack.append(added)
+        self._push_size(tag, attrs)
 
     def handle_endtag(self, tag: str) -> None:
         if str(tag or "").lower() == "br":
             return
-        if not self._style_stack:
-            return
-        for item in self._style_stack.pop():
-            if not any(item in frame for frame in self._style_stack):
-                self.active.discard(item)
+        if self._style_stack:
+            for item in self._style_stack.pop():
+                if not any(item in frame for frame in self._style_stack):
+                    self.active.discard(item)
+        if self.size_stack:
+            self.size_stack.pop()
 
     def _append_text(self, data: str) -> None:
         text = _normalize_pdf_text(unescape(data))
         if not text:
             return
+        delta, absolute = self._current_size_fields()
         run = {
             "text": text,
             "bold": "bold" in self.active,
             "italic": "italic" in self.active,
             "underline": "underline" in self.active,
+            "size_delta": delta,
+            "font_size": absolute,
         }
         if (
             self.lines[-1]
             and self.lines[-1][-1]["bold"] == run["bold"]
             and self.lines[-1][-1]["italic"] == run["italic"]
             and self.lines[-1][-1]["underline"] == run["underline"]
+            and float(self.lines[-1][-1].get("size_delta") or 0) == float(run["size_delta"])
+            and self.lines[-1][-1].get("font_size") == run.get("font_size")
         ):
             self.lines[-1][-1]["text"] += text
         else:
@@ -1539,6 +1554,8 @@ def _split_styled_runs_on_newlines(runs: list[dict[str, Any]]) -> list[list[dict
                         "bold": bool(run.get("bold")),
                         "italic": bool(run.get("italic")),
                         "underline": bool(run.get("underline")),
+                        "size_delta": float(run.get("size_delta") or 0),
+                        "font_size": run.get("font_size"),
                     }
                 )
     return expanded or [[]]
@@ -1551,7 +1568,7 @@ def _html_styled_lines(value: object) -> list[list[dict[str, Any]]]:
     if "<" not in raw:
         lines = [_normalize_pdf_text(unescape(line)) for line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
         return [
-            [{"text": line, "bold": False, "italic": False, "underline": False}]
+            [{"text": line, "bold": False, "italic": False, "underline": False, "size_delta": 0.0, "font_size": None}]
             for line in lines
             if line
         ] or [[]]
@@ -1588,7 +1605,10 @@ def _append_styled_meeting_pdf_lines(
     cell_italic: bool = False,
     cell_underline: bool = False,
 ) -> None:
-    for line_index, runs in enumerate(styled_lines or [[]]):
+    from app.services.field_list_service import print_note_font_size
+
+    line_y = y
+    for runs in styled_lines or [[]]:
         prepared: list[dict[str, Any]] = []
         for run in runs:
             text = _normalize_pdf_text(run.get("text"))
@@ -1600,15 +1620,16 @@ def _append_styled_meeting_pdf_lines(
                     "bold": cell_bold or bool(run.get("bold")),
                     "italic": cell_italic or bool(run.get("italic")),
                     "underline": cell_underline or bool(run.get("underline")),
+                    "size": print_note_font_size(font_size, run),
                 }
             )
         if not prepared:
+            line_y -= line_step
             continue
-        line_y = y - (line_index * line_step)
         total_width = sum(
             _text_width(
                 item["text"],
-                font_size,
+                item["size"],
                 font_family,
                 bold=bool(item["bold"]),
                 italic=bool(item["italic"]),
@@ -1621,11 +1642,13 @@ def _append_styled_meeting_pdf_lines(
         elif align == "right":
             line_x += max(0.0, cell_width - total_width)
         cursor_x = line_x
+        line_size = max(item["size"] for item in prepared)
         for item in prepared:
             text = item["text"]
+            run_size = item["size"]
             text_width = _text_width(
                 text,
-                font_size,
+                run_size,
                 font_family,
                 bold=bool(item["bold"]),
                 italic=bool(item["italic"]),
@@ -1635,15 +1658,17 @@ def _append_styled_meeting_pdf_lines(
                     text=text,
                     x=cursor_x,
                     y=line_y,
-                    size=font_size,
+                    size=run_size,
                     bold=bool(item["bold"]),
                     italic=bool(item["italic"]),
                 )
             )
             if item["underline"]:
-                underline_y = line_y - (font_size * 0.18)
+                underline_y = line_y - (run_size * 0.18)
                 page.rules.append(_PdfRule(cursor_x, underline_y, cursor_x + text_width, underline_y, 0.35))
             cursor_x += text_width
+        this_step = line_step * (line_size / font_size) if font_size else line_step
+        line_y -= this_step
 
 
 def _html_line_count(value: object) -> int:
@@ -3362,7 +3387,15 @@ def build_address_book_pdf(
             contact, name, name_max_width, first_line_max_width=first_line_max_width
         )
         phones_drawn = min(len(phones), len(name_lines))
-        extra_rows = max(0, len(phones) - phones_drawn, address_line_count)
+        note_rows = sum(
+            1
+            for value in (
+                *(contact.get("print_book_name") or []),
+                *(contact.get("print_after_address") or []),
+            )
+            if str(value or "").strip()
+        )
+        extra_rows = max(0, len(phones) - phones_drawn, address_line_count + note_rows)
         return (len(name_lines) + extra_rows + 0.25) * line_step
 
     def estimate_bible_block_height(field_name: str, meeting_name: str, meeting: dict | None = None) -> float:
@@ -3600,9 +3633,19 @@ def build_address_book_pdf(
                             note_run_size(run),
                             font_family,
                             bold=bool(run.get("bold")),
+                            italic=bool(run.get("italic")),
                         )
                         for run in runs
                     )
+
+                def note_runs_step(runs: list[dict]) -> float:
+                    sizes = [
+                        note_run_size(run)
+                        for run in runs
+                        if str(run.get("text") or "").strip()
+                    ]
+                    peak = max(sizes) if sizes else font_size
+                    return max(line_step, peak * current_meeting_line_height)
 
                 def add_note_runs(runs: list[dict], x: float) -> None:
                     cursor = x
@@ -3611,9 +3654,16 @@ def build_address_book_pdf(
                         if not text:
                             continue
                         size = note_run_size(run)
-                        width = _text_width(text, size, font_family, bold=bool(run.get("bold")))
                         is_bold = bool(run.get("bold"))
-                        add_text(text, cursor, size=size, bold=is_bold, italic=bool(run.get("italic")))
+                        is_italic = bool(run.get("italic"))
+                        width = _text_width(
+                            text,
+                            size,
+                            font_family,
+                            bold=is_bold,
+                            italic=is_italic,
+                        )
+                        add_text(text, cursor, size=size, bold=is_bold, italic=is_italic)
                         if run.get("underline"):
                             rule_y = y - (size * 0.18)
                             page.rules.append(_PdfRule(cursor, rule_y, cursor + width, rule_y, 0.35))
@@ -3761,7 +3811,7 @@ def build_address_book_pdf(
                         add_contact_name_line(line, line_x, bold_last_name=(index == 0))
                         if index == 0 and pb_inline_runs:
                             add_note_runs(pb_inline_runs, drawn_name_end(line, line_x))
-                    y -= line_step
+                    y -= note_runs_step(pb_inline_runs) if pb_inline_runs else line_step
                     # Lines rendered below the name share rows with any remaining phones,
                     # so the note never pushes a phone onto a line of its own. The pb note
                     # (when it did not fit on the name line) comes first, then the address
@@ -3774,7 +3824,10 @@ def build_address_book_pdf(
                     for pa_runs in pa_run_lines:
                         below_lines.append(("pa", pa_runs, "", False))
                     for line_index in range(max(0, len(phones) - phones_drawn, len(below_lines))):
-                        ensure_space(1, field_name, heading)
+                        row_step = line_step
+                        if line_index < len(below_lines) and below_lines[line_index][0] in ("pb", "pa"):
+                            row_step = note_runs_step(below_lines[line_index][1])
+                        ensure_space(row_step / line_step if line_step else 1, field_name, heading)
                         phone_index = phones_drawn + line_index
                         if phone_index < len(phones):
                             draw_phone(phones[phone_index], continuation=True)
@@ -3793,7 +3846,7 @@ def build_address_book_pdf(
                                 add_note_runs(line, x)
                             else:
                                 add_text(line, x, uri=uri, italic=address_italic and not has_coordinates)
-                        y -= line_step
+                        y -= row_step
                     y -= line_step * 0.25
             draw_printed_contacts(list(meeting.get("contacts") or []))
             bible_rows = meeting_rows(field_name, meeting_name) if include_bible_study else []

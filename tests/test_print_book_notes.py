@@ -6,7 +6,7 @@ from pathlib import Path
 import fitz
 
 from app.database import initialize_database, set_request_db_path
-from app.services.address_book_pdf_service import build_address_book_pdf
+from app.services.address_book_pdf_service import _html_styled_lines, build_address_book_pdf
 from app.services.field_list_service import (
     _field_list_print_contact_name_head_html,
     _parse_print_book_notes,
@@ -77,6 +77,29 @@ class PrintBookNoteSpacingTests(unittest.TestCase):
         self.assertNotIn("data-note-size-delta", after[0])
         self.assertIn('data-note-size-delta="1"', after[1])
 
+    def test_style_calc_size_is_kept_without_data_attribute(self) -> None:
+        before, _after = _parse_print_book_notes(
+            '<span style="font-size: calc(1em + 1.5pt)"><em>pb/(live primarily in SD)</em></span>'
+        )
+        runs = print_book_note_runs(before[0], default_gap=" ")
+        body = [run for run in runs if str(run["text"]).strip()]
+        self.assertEqual(
+            [(run["text"], run["italic"], run["size_delta"]) for run in body],
+            [("(live primarily in SD)", True, 1.5)],
+        )
+        self.assertEqual(print_book_note_display(before[0], default_gap=" "), " (live primarily in SD)")
+        self.assertNotIn("pb/", print_book_note_display(before[0]))
+
+    def test_html_parser_keeps_note_size_delta(self) -> None:
+        lines = _html_styled_lines(
+            '<span data-note-size-delta="1.5" style="font-size: calc(1em + 1.5pt)">'
+            "<em>(live primarily in SD)</em></span>"
+        )
+        run = lines[0][0]
+        self.assertEqual(run["text"], "(live primarily in SD)")
+        self.assertTrue(run["italic"])
+        self.assertEqual(run["size_delta"], 1.5)
+
     def test_note_size_delta_is_clamped(self) -> None:
         huge = print_book_note_runs('<span data-note-size-delta="20">Huge</span>')
         tiny = print_book_note_runs('<span data-note-size-delta="-20">Tiny</span>')
@@ -137,6 +160,129 @@ class PrintBookNoteSpacingTests(unittest.TestCase):
         self.assertAlmostEqual(sizes["Tom"], 10.0, places=1)
         self.assertAlmostEqual(sizes["Jerry"], 11.5, places=1)
         self.assertGreater(sizes["Jerry"], sizes["Tom"])
+
+    def test_pdf_italic_pb_note_uses_editor_size(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(self._tempdir.name) / "app.sqlite3")
+        initialize_database()
+        before, _after = _parse_print_book_notes(
+            '<span data-note-size-delta="1.5" style="font-size: calc(1em + 1.5pt)">'
+            "<em>pb/(live primarily in SD)</em></span>"
+        )
+        try:
+            pdf = build_address_book_pdf(
+                fields=[
+                    {
+                        "name": "NC Eastern",
+                        "meetings": [
+                            {
+                                "name": "OXFORD",
+                                "contacts": [
+                                    {
+                                        "name": "SIEGEL, Darryl & Colleen",
+                                        "phones": [],
+                                        "addresses": [],
+                                        "print_book_name": before,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+                meeting_preview_sections=[],
+                settings={"meeting_page_mode": "one_meeting", "include_bible_study_union_info": 0},
+                layout={"trim_width_in": 8.5, "trim_height_in": 11, "base_font_size_pt": 10, "font_family": "Arial"},
+                print_order_mode="default",
+                print_order_json="",
+            )
+        finally:
+            set_request_db_path(None)
+            self._tempdir.cleanup()
+        document = fitz.open(stream=pdf, filetype="pdf")
+        page = next(item for item in document if "SIEGEL" in item.get_text())
+        page_text = page.get_text()
+        self.assertIn("(live primarily in SD)", page_text)
+        self.assertNotIn("pb/", page_text)
+        sizes: dict[str, float] = {}
+        fonts: dict[str, str] = {}
+        flags: dict[str, int] = {}
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text") or ""
+                    if "SIEGEL" in text:
+                        sizes["name"] = span["size"]
+                    elif "live primarily" in text:
+                        sizes["note"] = span["size"]
+                        fonts["note"] = str(span.get("font") or "")
+                        flags["note"] = int(span.get("flags") or 0)
+        self.assertEqual(set(sizes), {"name", "note"})
+        self.assertAlmostEqual(sizes["name"], 10.0, places=1)
+        self.assertAlmostEqual(sizes["note"], 11.5, places=1)
+        self.assertGreater(sizes["note"], sizes["name"])
+        font = fonts["note"].lower()
+        self.assertTrue(bool(flags["note"] & 2) or "italic" in font or "oblique" in font, fonts["note"])
+
+    def test_pdf_large_pa_note_does_not_overlap_next_contact(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        set_request_db_path(Path(self._tempdir.name) / "app.sqlite3")
+        initialize_database()
+        try:
+            pdf = build_address_book_pdf(
+                fields=[
+                    {
+                        "name": "NC Eastern",
+                        "meetings": [
+                            {
+                                "name": "OXFORD",
+                                "contacts": [
+                                    {
+                                        "name": "ADAMS, Ann",
+                                        "phones": [],
+                                        "addresses": [],
+                                        "print_after_address": [
+                                            '<span data-note-size-delta="8">Huge note line</span>'
+                                        ],
+                                    },
+                                    {
+                                        "name": "BAKER, Ben",
+                                        "phones": [],
+                                        "addresses": [],
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ],
+                meeting_preview_sections=[],
+                settings={"meeting_page_mode": "one_meeting", "include_bible_study_union_info": 0},
+                layout={"trim_width_in": 8.5, "trim_height_in": 11, "base_font_size_pt": 10, "font_family": "Arial"},
+                print_order_mode="default",
+                print_order_json="",
+            )
+        finally:
+            set_request_db_path(None)
+            self._tempdir.cleanup()
+        document = fitz.open(stream=pdf, filetype="pdf")
+        page = next(item for item in document if "ADAMS" in item.get_text() and "BAKER" in item.get_text())
+        boxes: dict[str, tuple[float, float, float, float]] = {}
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text") or ""
+                    if "Huge note" in text:
+                        boxes["note"] = span["bbox"]
+                    elif "BAKER" in text:
+                        boxes["next"] = span["bbox"]
+        self.assertEqual(set(boxes), {"note", "next"})
+        self.assertLessEqual(boxes["note"][3], boxes["next"][1])
+        self.assertAlmostEqual(next(
+            span["size"]
+            for block in page.get_text("dict")["blocks"]
+            for line in block.get("lines", [])
+            for span in line.get("spans", [])
+            if "Huge note" in (span.get("text") or "")
+        ), 18.0, places=1)
 
     def test_pdf_name_line_uses_the_spaces_typed_after_pb(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()

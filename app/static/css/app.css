@@ -756,6 +756,13 @@
   font-family: inherit;
 }
 
+.address-book-pdf-print-book [data-note-size-delta] {
+  font-family: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  line-height: 1.15;
+}
+
 .address-book-pdf-contact-address {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -8162,6 +8169,14 @@ button.site-nav-dropdown-item:hover {
   font-style: normal;
   font-family: inherit;
   font-weight: 500;
+}
+
+.field-list-print-book-note [data-note-size-delta],
+.field-list-print-after-note [data-note-size-delta] {
+  font-family: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  line-height: 1.15;
 }
 
 .field-list-print-note-line {

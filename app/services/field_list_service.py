@@ -1696,6 +1696,19 @@ def _contact_name_head(contact: dict[str, Any]) -> str:
     return value
 
 
+def _leading_child_names(
+    typed_segments: list[tuple[str, str]],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Children that open the suffix, then whatever follows them."""
+    child_names: list[str] = []
+    for index, (kind, text) in enumerate(typed_segments):
+        if kind != "child":
+            return child_names, typed_segments[index:]
+        if text:
+            child_names.append(text)
+    return child_names, []
+
+
 def _wrap_contact_name_lines(
     contact: dict[str, Any],
     measure_width,
@@ -1704,6 +1717,14 @@ def _wrap_contact_name_lines(
     first_line_measure_width=None,
     first_line_max_width: float | None = None,
 ) -> list[str]:
+    """Pack parents and children onto as few name lines as the widths allow.
+
+    Line 1 is the bold-surname column through the right margin. Line 2 is the
+    indented continuation. All children stay with the parents when that fits.
+    Otherwise they stay together on line 2 when that line can hold every child.
+    Children share line 1 only when putting them all on line 2 would wrap.
+    Lists that still cannot fit in two lines keep wrapping, without ellipsis.
+    """
     typed_segments = _relationship_suffix_typed_segments(contact)
     head = _contact_name_head(contact)
     first_measure = first_line_measure_width or measure_width
@@ -1716,6 +1737,28 @@ def _wrap_contact_name_lines(
     full = f"{head}{suffix}"
     if first_measure(full) <= first_max:
         return [full]
+
+    child_names, other_segments = _leading_child_names(typed_segments)
+    if child_names:
+        child_line = ", ".join(child_names)
+        parents_and_children = f"{head}; {child_line}"
+        children_fit_with_parents = first_measure(parents_and_children) <= first_max
+        children_fit_on_line_two = measure_width(child_line) <= max_width
+        # Line 2 is wide enough for every child, so do not split any onto line 1.
+        if not children_fit_with_parents and children_fit_on_line_two:
+            parent_line = head if head.endswith(";") else f"{head};"
+            if not other_segments:
+                return [parent_line, child_line]
+            continuation = _pack_typed_suffix_lines(
+                other_segments,
+                measure_width,
+                max_width,
+                initial_text=child_line,
+                first_line_measure_width=measure_width,
+                first_line_max_width=max_width,
+            )
+            return [parent_line, *continuation] if continuation else [parent_line, child_line]
+
     return _pack_typed_suffix_lines(
         typed_segments,
         measure_width,
@@ -1843,11 +1886,19 @@ _NOTE_STYLE_TAGS = {
 _KNOWN_NOTE_TAG = re.compile(
     r"</?(?:strong|b|em|i|u|br)\b[^>]*>"
     r"|</span\s*>"
-    r"|<span\b[^>]*\bdata-note-size-delta\s*=\s*['\"]?-?\d+(?:\.\d+)?['\"][^>]*>",
+    r"|<span\b[^>]*(?:data-note-size-delta\s*=|font-size)[^>]*>",
     re.IGNORECASE,
 )
 _NOTE_BREAK = re.compile(r"<br\s*/?>|</(?:div|p)\s*>", re.IGNORECASE)
 _NOTE_BLOCK_OPEN = re.compile(r"<(?:div|p)[^>]*>", re.IGNORECASE)
+_NOTE_SIZE_CALC = re.compile(
+    r"font-size\s*:\s*calc\(\s*1em\s*([+-])\s*(-?\d+(?:\.\d+)?)\s*pt\s*\)",
+    re.IGNORECASE,
+)
+_NOTE_SIZE_PT = re.compile(
+    r"font-size\s*:\s*(-?\d+(?:\.\d+)?)\s*pt\b",
+    re.IGNORECASE,
+)
 NOTE_SIZE_STEP = 0.5
 NOTE_SIZE_MIN_DELTA = -6.0
 NOTE_SIZE_MAX_DELTA = 8.0
@@ -1878,8 +1929,18 @@ def _format_note_size_delta(value: object) -> str:
 
 def print_note_font_size(base_size: float, run: dict[str, Any] | None = None) -> float:
     """Return a printed note size: book font plus the line's 0.5pt delta, clamped."""
+    payload = run or {}
+    stored = payload.get("font_size")
+    if stored not in (None, ""):
+        try:
+            absolute = float(stored)
+        except (TypeError, ValueError):
+            absolute = None
+        else:
+            if math.isfinite(absolute):
+                return max(NOTE_PRINT_MIN_PT, min(NOTE_PRINT_MAX_PT, absolute))
     try:
-        delta = float((run or {}).get("size_delta") or 0)
+        delta = float(payload.get("size_delta") or 0)
     except (TypeError, ValueError):
         delta = 0.0
     try:
@@ -1889,47 +1950,108 @@ def print_note_font_size(base_size: float, run: dict[str, Any] | None = None) ->
     return max(NOTE_PRINT_MIN_PT, min(NOTE_PRINT_MAX_PT, base + delta))
 
 
+def _html_attr_map(attrs: list[tuple[str, str | None]] | None) -> dict[str, str]:
+    return {str(key or "").lower(): str(value or "") for key, value in (attrs or [])}
+
+
+def _styles_from_style_attr(style: object) -> set[str]:
+    lowered = str(style or "").lower()
+    found: set[str] = set()
+    if not lowered:
+        return found
+    compact = lowered.replace(" ", "")
+    if "italic" in lowered:
+        found.add("italic")
+    if "bold" in lowered or "font-weight:700" in compact or "font-weight:bold" in compact:
+        found.add("bold")
+    if "underline" in lowered:
+        found.add("underline")
+    return found
+
+
+def note_size_from_attrs(attrs: list[tuple[str, str | None]] | None) -> tuple[float, float | None, bool]:
+    """Return ``(delta, absolute_pt, found)`` from a note size span."""
+    attr_map = _html_attr_map(attrs)
+    parsed = _parse_note_size_delta(attr_map.get("data-note-size-delta"))
+    if parsed is not None:
+        return parsed, None, True
+    style = attr_map.get("style") or ""
+    calc = _NOTE_SIZE_CALC.search(style)
+    if calc:
+        sign, raw = calc.group(1), calc.group(2)
+        try:
+            number = float(raw)
+        except ValueError:
+            number = None
+        if number is not None and math.isfinite(number):
+            delta = number if sign == "+" else -abs(number)
+            stepped = _parse_note_size_delta(delta)
+            if stepped is not None:
+                return stepped, None, True
+    point = _NOTE_SIZE_PT.search(style)
+    if point:
+        try:
+            value = float(point.group(1))
+        except ValueError:
+            value = None
+        if value is not None and math.isfinite(value):
+            return 0.0, max(NOTE_PRINT_MIN_PT, min(NOTE_PRINT_MAX_PT, value)), True
+    return 0.0, None, False
+
+
 class _InlineNoteParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.runs: list[dict[str, Any]] = []
         self.active: set[str] = set()
-        self.size_stack: list[float] = []
+        self.size_stack: list[tuple[float, float | None]] = []
+        self._mark_stack: list[set[str]] = []
 
-    def _current_size(self) -> float:
-        return self.size_stack[-1] if self.size_stack else 0.0
+    def _current_size_fields(self) -> tuple[float, float | None]:
+        return self.size_stack[-1] if self.size_stack else (0.0, None)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         name = str(tag or "").lower()
+        if name == "br":
+            return
+        added: set[str] = set()
         style = _NOTE_STYLE_TAGS.get(name)
         if style:
-            self.active.add(style)
-            return
-        if name != "span":
-            return
-        attr_map = {str(key or "").lower(): (value or "") for key, value in attrs}
-        parsed = _parse_note_size_delta(attr_map.get("data-note-size-delta"))
-        self.size_stack.append(self._current_size() if parsed is None else parsed)
+            added.add(style)
+        added.update(_styles_from_style_attr(_html_attr_map(attrs).get("style")))
+        for item in added:
+            self.active.add(item)
+        self._mark_stack.append(added)
+        delta, absolute, found = note_size_from_attrs(attrs) if name == "span" else (0.0, None, False)
+        if found and absolute is not None:
+            self.size_stack.append((0.0, absolute))
+        elif found:
+            self.size_stack.append((delta, None))
+        else:
+            self.size_stack.append(self._current_size_fields())
 
     def handle_endtag(self, tag: str) -> None:
-        name = str(tag or "").lower()
-        style = _NOTE_STYLE_TAGS.get(name)
-        if style:
-            self.active.discard(style)
+        if str(tag or "").lower() == "br":
             return
-        if name == "span" and self.size_stack:
+        if self._mark_stack:
+            for item in self._mark_stack.pop():
+                if not any(item in frame for frame in self._mark_stack):
+                    self.active.discard(item)
+        if self.size_stack:
             self.size_stack.pop()
 
     def handle_data(self, data: str) -> None:
         text = unescape(data)
         if not text:
             return
+        delta, absolute = self._current_size_fields()
         run = {
             "text": text,
             "bold": "bold" in self.active,
             "italic": "italic" in self.active,
             "underline": "underline" in self.active,
-            "size_delta": self._current_size(),
+            "size_delta": delta,
+            "font_size": absolute,
         }
         if self.runs:
             previous = self.runs[-1]
@@ -1938,6 +2060,7 @@ class _InlineNoteParser(HTMLParser):
                 and previous["italic"] == run["italic"]
                 and previous["underline"] == run["underline"]
                 and float(previous.get("size_delta") or 0) == float(run["size_delta"])
+                and previous.get("font_size") == run.get("font_size")
             ):
                 previous["text"] += text
                 return
@@ -2050,7 +2173,7 @@ def print_book_note_runs(value: object, *, default_gap: str = "") -> list[dict[s
     if not "".join(str(run.get("text") or "") for run in body).strip():
         return []
     gap = plain[:gap_len] or default_gap
-    styled = [{"text": gap, "bold": False, "italic": False, "underline": False, "size_delta": 0.0}] if gap else []
+    styled = [{"text": gap, "bold": False, "italic": False, "underline": False, "size_delta": 0.0, "font_size": None}] if gap else []
     styled.extend(body)
     return styled
 
@@ -2076,8 +2199,16 @@ def _style_runs_html(runs: list[dict[str, Any]], *, preserve_spaces: bool = Fals
         if size_label:
             text = (
                 f'<span data-note-size-delta="{size_label}" '
-                f'style="font-size: calc(1em + {size_label}pt)">{text}</span>'
+                f'style="font-size: calc(1em + {size_label}pt); line-height: 1.15">{text}</span>'
             )
+        elif run.get("font_size") not in (None, ""):
+            try:
+                absolute = float(run.get("font_size"))
+            except (TypeError, ValueError):
+                absolute = None
+            if absolute is not None and math.isfinite(absolute):
+                label = str(int(absolute) if absolute == int(absolute) else absolute)
+                text = f'<span style="font-size: {label}pt">{text}</span>'
         parts.append(text)
     return "".join(parts)
 
@@ -4825,6 +4956,13 @@ main {{
   font-style: normal;
   font-family: inherit;
   font-weight: 500;
+}}
+.print-field-list-print-book-note [data-note-size-delta],
+.print-field-list-print-after-note [data-note-size-delta] {{
+  font-family: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  line-height: 1.15;
 }}
 .print-field-list-print-note-line {{
   min-width: 0;

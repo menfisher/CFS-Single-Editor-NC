@@ -333,12 +333,20 @@ function sanitizeAddressBookPdfNoteHtml(value) {
     if (tag === "U") return `<u>${children}</u>`;
     if (tag === "SPAN") {
       const raw = node.getAttribute("data-note-size-delta");
-      if (raw === null || raw === "") return children;
-      const delta = Math.round(Number(raw) * 2) / 2;
-      if (!Number.isFinite(delta) || delta === 0) return children;
-      const clamped = Math.max(-6, Math.min(8, delta));
+      let delta = Number(raw);
+      if (raw === null || raw === "" || !Number.isFinite(delta)) {
+        const style = node.getAttribute("style") || "";
+        const calc = style.match(/font-size\s*:\s*calc\(\s*1em\s*([+-])\s*(-?[\d.]+)\s*pt\s*\)/i);
+        if (calc) {
+          const magnitude = Number(calc[2]);
+          delta = calc[1] === "-" ? -Math.abs(magnitude) : magnitude;
+        }
+      }
+      const stepped = Math.round(Number(delta) * 2) / 2;
+      if (!Number.isFinite(stepped) || stepped === 0) return children;
+      const clamped = Math.max(-6, Math.min(8, stepped));
       const label = String(clamped);
-      return `<span data-note-size-delta="${escapeAddressBookPdfHtml(label)}" style="font-size: calc(1em + ${escapeAddressBookPdfHtml(label)}pt)">${children}</span>`;
+      return `<span data-note-size-delta="${escapeAddressBookPdfHtml(label)}" style="font-size: calc(1em + ${escapeAddressBookPdfHtml(label)}pt); line-height: 1.15">${children}</span>`;
     }
     return children;
   };
@@ -841,6 +849,19 @@ function packTypedSuffixLinesForAddressBookPdf(
   return lines;
 }
 
+function leadingChildNamesForAddressBookPdf(typedSegments) {
+  const childNames = [];
+  let othersStart = typedSegments.length;
+  for (let index = 0; index < typedSegments.length; index += 1) {
+    if (typedSegments[index].kind !== "child") {
+      othersStart = index;
+      break;
+    }
+    if (typedSegments[index].text) childNames.push(typedSegments[index].text);
+  }
+  return { childNames, otherSegments: typedSegments.slice(othersStart) };
+}
+
 function wrapAddressBookPdfContactNameLines(contact, maxWidthPx, fontSizePx = 10, fontFamily = "Arial", firstLineMaxWidthPx = null) {
   const typedSegments = relationshipSuffixTypedSegments(contact);
   const head = contactNameHead(contact);
@@ -857,6 +878,29 @@ function wrapAddressBookPdfContactNameLines(contact, maxWidthPx, fontSizePx = 10
       : `, ${typedSegments.map((segment) => segment.text).join(", ")}`);
   const full = `${head}${suffix}`;
   if (measureFirst(full) <= firstMax) return [full];
+
+  const { childNames, otherSegments } = leadingChildNamesForAddressBookPdf(typedSegments);
+  if (childNames.length) {
+    const childLine = childNames.join(", ");
+    const parentsAndChildren = `${head}; ${childLine}`;
+    const childrenFitWithParents = measureFirst(parentsAndChildren) <= firstMax;
+    const childrenFitOnLineTwo = measureWidth(childLine) <= maxWidthPx;
+    if (!childrenFitWithParents && childrenFitOnLineTwo) {
+      const parentLine = head.endsWith(";") ? head : `${head};`;
+      if (!otherSegments.length) return [parentLine, childLine];
+      const continuation = packTypedSuffixLinesForAddressBookPdf(
+        otherSegments,
+        measureWidth,
+        maxWidthPx,
+        {
+          initialText: childLine,
+          firstLineMeasureWidth: measureWidth,
+          firstLineMaxWidth: maxWidthPx,
+        },
+      );
+      return continuation.length ? [parentLine, ...continuation] : [parentLine, childLine];
+    }
+  }
 
   return packTypedSuffixLinesForAddressBookPdf(
     typedSegments,

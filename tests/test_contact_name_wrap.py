@@ -46,6 +46,7 @@ class RelationshipWrapTests(unittest.TestCase):
         }
         lines = _wrap_contact_name_lines(contact, lambda text: float(len(text)), 32.0)
         self.assertEqual(lines[0], "BERRY, Andrew & Christina;")
+        self.assertGreaterEqual(len(lines), 3, lines)
         self.assertTrue(any("Lily" in line for line in lines), lines)
         self.assertTrue(any("Blakely BERRY" in line for line in lines), lines)
         joined = "\n".join(lines[1:])
@@ -64,20 +65,124 @@ class RelationshipWrapTests(unittest.TestCase):
         self.assertEqual(lines, [full])
         self.assertNotIn("...", "".join(lines))
 
-    def test_children_use_remaining_first_line_then_wrap(self) -> None:
+    def test_children_that_fit_on_line_two_stay_off_line_one(self) -> None:
         contact = {
             "name": "GLAESER, BJOERN & Susannah",
             "children": ["Henry", "Eliana", "Jonah", "Matilda", "Sebastian"],
             "other_relationships": [],
         }
+        # Parents plus every child is 68 columns; the child list alone is 40.
         lines = _wrap_contact_name_lines(contact, lambda text: float(len(text)), 45.0)
-        self.assertTrue(lines[0].startswith("GLAESER, BJOERN & Susannah;"), lines)
-        self.assertIn("Henry", lines[0])
-        self.assertGreaterEqual(len(lines), 2, lines)
+        self.assertEqual(lines[0], "GLAESER, BJOERN & Susannah;")
+        self.assertNotIn("Henry", lines[0])
+        self.assertNotIn("Sebastian", lines[0])
+        self.assertEqual(lines[1], "Henry, Eliana, Jonah, Matilda, Sebastian")
+        self.assertEqual(len(lines), 2, lines)
         joined = " ".join(lines)
-        self.assertIn("Sebastian", joined)
         self.assertNotIn("...", joined)
         self.assertNotIn("\u2026", joined)
+
+    def test_children_share_line_one_when_line_two_would_wrap(self) -> None:
+        contact = {
+            "name": "GLAESER, BJOERN & Susannah",
+            "children": ["Henry", "Eliana", "Jonah", "Matilda", "Sebastian"],
+            "other_relationships": [],
+        }
+        # The child list is 40 columns, so it cannot stay together on a 36-column line 2.
+        lines = _wrap_contact_name_lines(contact, lambda text: float(len(text)), 36.0)
+        self.assertEqual(
+            lines,
+            [
+                "GLAESER, BJOERN & Susannah; Henry,",
+                "Eliana, Jonah, Matilda, Sebastian",
+            ],
+        )
+        self.assertIn("Henry", lines[0])
+        self.assertNotIn("Eliana", lines[0])
+        self.assertIn("Sebastian", lines[1])
+        self.assertEqual(len(lines), 2, lines)
+        joined = " ".join(lines)
+        self.assertNotIn("...", joined)
+        self.assertNotIn("\u2026", joined)
+
+    def test_children_use_continuation_width_not_the_wider_first_line(self) -> None:
+        contact = {
+            "name": "GLAESER, BJOERN & Susannah",
+            "children": ["Henry", "Eliana", "Jonah", "Matilda", "Sebastian"],
+            "other_relationships": [],
+        }
+        # 40-column child list fits the 50-column parent line's remainder check,
+        # but line 2 is only 30 columns, so the list must split.
+        lines = _wrap_contact_name_lines(
+            contact,
+            lambda text: float(len(text)),
+            30.0,
+            first_line_max_width=50.0,
+        )
+        self.assertEqual(lines[0], "GLAESER, BJOERN & Susannah; Henry, Eliana, Jonah,")
+        self.assertIn("Jonah", lines[0])
+        self.assertNotIn("Matilda", lines[0])
+        self.assertEqual(lines[1], "Matilda, Sebastian")
+        self.assertEqual(len(lines), 2, lines)
+        self.assertNotIn("...", " ".join(lines))
+
+    def test_children_packing_uses_bold_surname_and_continuation_widths(self) -> None:
+        from app.services.address_book_pdf_service import _contact_name_line_width, _text_width
+
+        font_size = 7.0
+        font_family = "Arial"
+        head = "GLAESER, BJOERN & Susannah"
+        children = ["Henry", "Eliana", "Jonah", "Matilda"]
+        contact = {
+            "name": head,
+            "children": children,
+            "other_relationships": [],
+        }
+        child_line = ", ".join(children)
+        full = f"{head}; {child_line}"
+
+        def measure(text: str) -> float:
+            return _text_width(text, font_size, font_family)
+
+        def measure_first(text: str) -> float:
+            return _contact_name_line_width(text, font_size, font_family, bold_last_name=True)
+
+        lines = _wrap_contact_name_lines(
+            contact,
+            measure,
+            measure(child_line) + 12,
+            first_line_measure_width=measure_first,
+            first_line_max_width=measure_first(full),
+        )
+        self.assertEqual(lines, [full])
+        self.assertIn("Eliana", lines[0])
+
+        lines = _wrap_contact_name_lines(
+            contact,
+            measure,
+            measure(child_line),
+            first_line_measure_width=measure_first,
+            first_line_max_width=measure_first(full) - 0.5,
+        )
+        self.assertEqual(lines, [f"{head};", child_line])
+        self.assertNotIn("Henry", lines[0])
+
+        one_child = f"{head}; {children[0]}"
+        two_children = f"{head}; {children[0]}, {children[1]}"
+        first_max = (measure_first(one_child) + measure_first(two_children)) / 2
+        lines = _wrap_contact_name_lines(
+            contact,
+            measure,
+            measure(child_line) - 0.5,
+            first_line_measure_width=measure_first,
+            first_line_max_width=first_max,
+        )
+        self.assertEqual(len(lines), 2, lines)
+        self.assertIn(children[0], lines[0])
+        self.assertNotIn(children[1], lines[0])
+        self.assertIn(children[-1], lines[1])
+        self.assertNotIn("...", " ".join(lines))
+        self.assertNotIn("\u2026", " ".join(lines))
 
     def test_children_parsed_from_name_when_array_missing(self) -> None:
         contact = {
@@ -172,6 +277,38 @@ class AddressBookChildrenPdfTests(unittest.TestCase):
         ys = {round(span["bbox"][1], 1) for span in name_spans}
         self.assertEqual(len(ys), 1, text)
 
+    def _name_rows(self, spans, markers):
+        rows: dict[float, list] = {}
+        for span in spans:
+            if any(part in span["text"] for part in markers):
+                rows.setdefault(round(span["bbox"][1], 1), []).append(span)
+        lines = []
+        for y in sorted(rows):
+            parts = sorted(rows[y], key=lambda span: span["bbox"][0])
+            lines.append("".join(str(span["text"]) for span in parts))
+        return lines
+
+    def test_pdf_children_that_fit_on_line_two_stay_off_line_one(self) -> None:
+        children = ["Henry", "Eliana", "Jonah", "Matilda"]
+        contact = {
+            "name": "GLAESER, BJOERN & Susannah",
+            "phones": [{"value": "7045551212", "code": "B"}],
+            "addresses": [],
+            "children": children,
+            "other_relationships": [],
+        }
+        pdf = self._pdf_for_contact(contact)
+        spans, text = self._name_spans(pdf)
+        lines = self._name_rows(spans, ("GLAESER", *children))
+        self.assertEqual(len(lines), 2, text)
+        self.assertIn("GLAESER", lines[0])
+        self.assertNotIn("Henry", lines[0])
+        self.assertNotIn("Matilda", lines[0])
+        for child in children:
+            self.assertIn(child, lines[1], lines)
+        self.assertNotIn("...", text)
+        self.assertNotIn("\u2026", text)
+
     def test_long_children_list_wraps_without_ellipsis(self) -> None:
         children = [
             "Henry",
@@ -192,16 +329,16 @@ class AddressBookChildrenPdfTests(unittest.TestCase):
         }
         pdf = self._pdf_for_contact(contact)
         spans, text = self._name_spans(pdf)
-        self.assertIn("Genevieve", text)
-        self.assertIn("Theodore", text)
+        lines = self._name_rows(spans, ("GLAESER", *children))
+        self.assertEqual(len(lines), 2, text)
+        self.assertIn("Henry", lines[0])
+        self.assertIn("Jonah", lines[0])
+        self.assertNotIn("Matilda", lines[0])
+        self.assertIn("Matilda", lines[1])
+        self.assertIn("Genevieve", lines[1])
+        self.assertIn("Theodore", lines[1])
         self.assertNotIn("...", text)
         self.assertNotIn("\u2026", text)
-        name_spans = [
-            span for span in spans
-            if any(part in span["text"] for part in ("GLAESER", *children))
-        ]
-        ys = {round(span["bbox"][1], 1) for span in name_spans}
-        self.assertGreaterEqual(len(ys), 2, text)
 
 
 if __name__ == "__main__":
